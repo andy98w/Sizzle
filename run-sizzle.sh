@@ -10,6 +10,7 @@ show_help() {
   echo "  backend       - Run the backend API server only"
   echo "  frontend      - Run the frontend Next.js app only"
   echo "  install       - Install all dependencies for both backend and frontend"
+  echo "  cleanup       - Run database cleanup to remove placeholder ingredients"
   echo "  help          - Show this help message"
   echo ""
   echo "If no command is provided, both backend and frontend will be started"
@@ -69,6 +70,27 @@ EOF
   echo "4. Copy the contents of backend/supabase_schema.sql and run it in the SQL Editor"
 fi
 
+# Run database cleanup
+run_cleanup() {
+  echo "🧹 Running database cleanup..."
+  cd backend
+  source venv/bin/activate
+  python -c "
+import traceback
+try:
+    import supabase
+    from db_manager import db
+    if db.is_connected():
+        count = db.cleanup_placeholder_ingredients()
+        print(f'Cleaned up {count} placeholder ingredients')
+    else:
+        print('Database connection failed. Check your .env file.')
+except Exception as e:
+    print(f'Error during cleanup: {e}')
+    traceback.print_exc()
+"
+}
+
 # Process command
 case "$1" in
   backend)
@@ -79,6 +101,9 @@ case "$1" in
     ;;
   install)
     install_dependencies
+    ;;
+  cleanup)
+    run_cleanup
     ;;
   help)
     show_help

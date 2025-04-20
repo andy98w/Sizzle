@@ -4,7 +4,7 @@ import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { FaUtensils, FaHome, FaBook, FaSearch } from 'react-icons/fa';
+import { FaUtensils, FaHome, FaBook, FaSearch, FaCarrot } from 'react-icons/fa';
 
 interface NavItem {
   name: string;
@@ -25,6 +25,11 @@ const Navigation: React.FC = () => {
       name: 'My Recipes',
       href: '/recipes',
       icon: <FaBook />
+    },
+    {
+      name: 'Ingredients',
+      href: '/ingredients',
+      icon: <FaCarrot />
     },
     {
       name: 'Sample Recipe',

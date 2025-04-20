@@ -11,6 +11,7 @@ import random
 from dotenv import load_dotenv
 from stability_ai import StabilityAIGenerator
 from db_manager import db as supabase_db
+from oci_storage import OCIObjectStorage
 
 # Load environment variables
 load_dotenv()
@@ -19,16 +20,19 @@ load_dotenv()
 os.makedirs("static/animations/actions", exist_ok=True)
 os.makedirs("static/animations/ingredients", exist_ok=True)
 
-# Initialize the RecipeAssistant
 assistant = RecipeAssistant()
 
-# Initialize Stability AI generator
 stability_api_key = os.getenv("STABILITY_API_KEY")
 if stability_api_key:
     image_generator = StabilityAIGenerator(stability_api_key)
 else:
     image_generator = None
     print("Warning: STABILITY_API_KEY not found. AI image generation will be disabled.")
+
+oci_par_url = os.getenv("OCI_PAR_URL")
+if not oci_par_url:
+    print("Warning: OCI_PAR_URL not found in environment variables. Cloud storage will be disabled.")
+oci_storage = OCIObjectStorage(oci_par_url or "")
 
 # Initialize FastAPI
 app = FastAPI(title="Sizzle - Animated Recipe Assistant API")
@@ -50,6 +54,7 @@ app.add_middleware(
 
 # Mount static files directory
 app.mount("/static", StaticFiles(directory="static"), name="static")
+print("Static files mounted at /static - serving from 'static' directory")
 
 class RecipeQuery(BaseModel):
     query: str
@@ -289,6 +294,51 @@ async def generate_action_image(action: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/check-ingredient-image/{ingredient}")
+async def check_ingredient_image(ingredient: str):
+    """Check if an image exists for an ingredient without generating one"""
+    try:
+        clean_name = ingredient.lower().replace(" ", "_")
+        existing_path = f"static/images/ingredients/{clean_name}.png"
+        
+        if os.path.exists(existing_path):
+            abs_path = os.path.abspath(existing_path)
+            print(f"Found existing image for {ingredient} at {abs_path}")
+            # Test file readability
+            with open(existing_path, 'rb') as f:
+                _ = f.read(1)  # Try to read 1 byte to check permissions
+            
+            # Check if we have a prompt for this ingredient in the database
+            prompt = None
+            if supabase_db.is_connected():
+                try:
+                    ingredient_data = supabase_db.get_image_by_name("ingredient", ingredient)
+                    if ingredient_data and "prompt" in ingredient_data:
+                        prompt = ingredient_data["prompt"]
+                except Exception as db_err:
+                    print(f"Error fetching prompt from database: {db_err}")
+            
+            return {
+                "exists": True,
+                "image_url": f"/static/images/ingredients/{clean_name}.png",
+                "full_path": abs_path,
+                "readable": True,
+                "ingredient": ingredient,
+                "prompt": prompt
+            }
+        else:
+            return {
+                "exists": False,
+                "ingredient": ingredient
+            }
+    except Exception as e:
+        print(f"Error checking image existence: {e}")
+        return {
+            "exists": False,
+            "error": str(e),
+            "ingredient": ingredient
+        }
+
 @app.get("/generate/ingredient/{ingredient}")
 async def generate_ingredient_image(ingredient: str):
     """Generate an image for a cooking ingredient"""
@@ -296,17 +346,62 @@ async def generate_ingredient_image(ingredient: str):
         raise HTTPException(status_code=400, detail="Image generation is not available. STABILITY_API_KEY not configured.")
     
     try:
-        image_url = image_generator.generate_ingredient_image(ingredient)
-        if not image_url:
-            raise HTTPException(status_code=500, detail=f"Failed to generate image for ingredient: {ingredient}")
+        # First check if the image already exists
+        clean_name = ingredient.lower().replace(" ", "_")
+        existing_path = f"static/images/ingredients/{clean_name}.png"
         
+        if os.path.exists(existing_path):
+            print(f"Using existing image for {ingredient}")
+            # Ensure the path is accessible
+            abs_path = os.path.abspath(existing_path)
+            image_url = f"/static/images/ingredients/{clean_name}.png"
+            # Test access
+            with open(existing_path, 'rb') as f:
+                _ = f.read(1)
+                
+            return {
+                "success": True,
+                "image_url": image_url,
+                "full_path": abs_path,
+                "ingredient": ingredient,
+                "cached": True
+            }
+            
+        print(f"API endpoint: Generating image for ingredient: {ingredient}")
+        image_url = image_generator.generate_ingredient_image(ingredient)
+        
+        if not image_url:
+            print(f"API endpoint: Failed to generate image for {ingredient}")
+            return {
+                "success": False,
+                "detail": f"Failed to generate image for ingredient: {ingredient}",
+                "ingredient": ingredient
+            }
+        
+        # Verify file exists after generation
+        if os.path.exists(image_url[1:]):  # Remove leading slash from path
+            print(f"API endpoint: Successfully generated image for {ingredient}: {image_url}")
+            return {
+                "success": True,
+                "image_url": image_url,
+                "full_path": os.path.abspath(image_url[1:]),
+                "ingredient": ingredient,
+                "cached": False
+            }
+        else:
+            print(f"API endpoint: File not found after generation: {image_url[1:]}")
+            return {
+                "success": False,
+                "detail": f"Image was generated but file not found at {image_url[1:]}",
+                "ingredient": ingredient
+            }
+    except Exception as e:
+        print(f"API endpoint error for {ingredient}: {str(e)}")
         return {
-            "success": True,
-            "image_url": image_url,
+            "success": False,
+            "detail": str(e),
             "ingredient": ingredient
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/generate/equipment/{equipment}")
 async def generate_equipment_image(equipment: str):
@@ -366,6 +461,215 @@ async def get_recipe_by_id(recipe_id: int):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+        
+@app.get("/common-ingredients")
+async def get_common_ingredients(count: int = 500):
+    """Get a list of common cooking ingredients"""
+    try:
+        ingredients = assistant.get_common_ingredients(count)
+        return {"ingredients": ingredients}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class IngredientPrompt(BaseModel):
+    ingredient: str
+    custom_prompt: str
+
+class SaveIngredientRequest(BaseModel):
+    ingredient: str
+    image_url: str
+    prompt: str
+
+@app.post("/generate/ingredient-with-prompt")
+async def generate_ingredient_with_custom_prompt(request: IngredientPrompt):
+    """Generate an ingredient image with a custom prompt"""
+    if not image_generator:
+        raise HTTPException(status_code=400, detail="Image generation is not available. STABILITY_API_KEY not configured.")
+    
+    try:
+        # Clean ingredient name for filename
+        clean_name = request.ingredient.lower().replace(" ", "_")
+        
+        # Generate the image with custom prompt
+        prompt = request.custom_prompt
+        print(f"Using custom prompt for {request.ingredient}: {prompt}")
+        images = image_generator.generate_image(prompt=prompt)
+        
+        if not images:
+            raise HTTPException(status_code=500, detail=f"Failed to generate image for ingredient: {request.ingredient}")
+            
+        # Save the first image
+        image_path = image_generator.save_image(images[0], "ingredients", clean_name)
+        if not image_path:
+            raise HTTPException(status_code=500, detail=f"Failed to save image for ingredient: {request.ingredient}")
+            
+        # Return the image URL
+        return {
+            "success": True,
+            "image_url": f"/{image_path}",
+            "ingredient": request.ingredient,
+            "prompt": prompt,
+            "cost": 0.03  # Cost in dollars
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/save-ingredient")
+async def save_ingredient(request: SaveIngredientRequest):
+    """Save an approved ingredient to the database and upload to OCI Object Storage"""
+    if not supabase_db.is_connected():
+        raise HTTPException(status_code=503, detail="Database not available")
+    
+    try:
+        # Process the incoming image URL
+        print(f"Original image URL: {request.image_url}")
+        
+        if request.image_url.startswith('/'):
+            local_path = request.image_url[1:]  # Remove leading slash for filesystem path
+        else:
+            local_path = request.image_url
+        
+        print(f"Local file path: {local_path}")
+        print(f"Checking file existence at: {os.path.abspath(local_path)}")
+        
+        # Verify file exists
+        if not os.path.exists(local_path):
+            raise HTTPException(status_code=404, detail=f"Image file not found at {local_path}")
+        
+        # Set permissions to ensure file is readable
+        os.chmod(local_path, 0o644)  # rw-r--r--
+        
+        # Extract filename for OCI upload
+        filename = os.path.basename(local_path)
+        oci_object_name = f"ingredients/{filename}"
+        
+        # Upload to OCI if available
+        oci_url = oci_storage.upload_image(local_path, oci_object_name)
+        
+        # Determine final URL for database storage
+        if not oci_url:
+            final_url = f"/static/images/ingredients/{filename}"  # Use standard format for local storage
+            print(f"Using local URL for database: {final_url}")
+        else:
+            final_url = oci_url
+            print(f"Using cloud URL for database: {final_url}")
+            print(f"FINAL OCI URL for Supabase DB: {final_url}")
+        
+        # Save to database
+        result = supabase_db.save_ingredient(
+            name=request.ingredient,
+            image_url=final_url,
+            prompt=request.prompt
+        )
+        
+        if not result:
+            raise HTTPException(status_code=500, detail=f"Failed to save ingredient: {request.ingredient}")
+        
+        # Return detailed response
+        return {
+            "success": True,
+            "message": f"Ingredient {request.ingredient} saved successfully",
+            "ingredient": result,
+            "image_url": final_url,  # URL that will be used for display
+            "local_path": os.path.abspath(local_path),  # Absolute path for debugging
+            "file_exists": os.path.exists(local_path),
+            "file_size": os.path.getsize(local_path) if os.path.exists(local_path) else 0
+        }
+    except Exception as e:
+        print(f"Error in save_ingredient: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/ingredients")
+async def list_ingredients(limit: int = 50, offset: int = 0):
+    """Get a list of saved ingredients with pagination"""
+    if not supabase_db.is_connected():
+        raise HTTPException(status_code=503, detail="Database not available")
+    
+    try:
+        ingredients = supabase_db.list_ingredients(limit=limit, offset=offset)
+        
+        # Sort ingredients by ID
+        ingredients.sort(key=lambda x: x.get('id', 999999))
+        
+        for ingredient in ingredients:
+            if not ingredient.get("name"):
+                continue
+                
+            # Ensure URLs are available
+            if not ingredient.get("url") or not ingredient.get("storage_path"):
+                try:
+                    direct_query = supabase_db.get_image_by_name("ingredient", ingredient["name"])
+                    if direct_query and (direct_query.get("url") or direct_query.get("storage_path")):
+                        if direct_query.get("url"):
+                            ingredient["url"] = direct_query.get("url")
+                        if direct_query.get("storage_path"):
+                            ingredient["storage_path"] = direct_query.get("storage_path")
+                except Exception:
+                    pass
+                
+            # Format local file URLs
+            if "url" in ingredient and ingredient["url"] and not ingredient["url"].startswith("http"):
+                if "storage_path" in ingredient and ingredient["storage_path"]:
+                    if not ingredient["storage_path"].startswith("/"):
+                        ingredient["url"] = f"/static/images/ingredients/{os.path.basename(ingredient['storage_path'])}"
+                    else:
+                        ingredient["url"] = ingredient["storage_path"]
+            
+            # Always show the save and prompt buttons
+            ingredient["stored_in_cloud"] = False
+            
+        # Get the total count for pagination
+        total_count = supabase_db.count_ingredients()
+        
+        return {
+            "ingredients": ingredients,
+            "total": total_count,
+            "limit": limit,
+            "offset": offset
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/ingredient/{name}")
+async def get_ingredient_by_name(name: str):
+    """Get a specific ingredient by name"""
+    if not supabase_db.is_connected():
+        raise HTTPException(status_code=503, detail="Database not available")
+    
+    try:
+        ingredient = supabase_db.get_image_by_name("ingredient", name)
+        
+        if not ingredient:
+            # Try case-insensitive search
+            all_ingredients = supabase_db.list_ingredients(limit=500)
+            name_lower = name.lower()
+            
+            for item in all_ingredients:
+                if item.get("name") and item.get("name").lower() == name_lower:
+                    ingredient = item
+                    break
+                    
+        if not ingredient:
+            raise HTTPException(status_code=404, detail=f"Ingredient '{name}' not found")
+            
+        # Fix URLs if needed
+        if "url" in ingredient and ingredient["url"] and not ingredient["url"].startswith("http"):
+            if "storage_path" in ingredient and ingredient["storage_path"]:
+                if not ingredient["storage_path"].startswith("/"):
+                    ingredient["url"] = f"/static/images/ingredients/{os.path.basename(ingredient['storage_path'])}"
+                else:
+                    ingredient["url"] = ingredient["storage_path"]
+        
+        # Always show the save and prompt buttons
+        ingredient["stored_in_cloud"] = False
+                    
+        return ingredient
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+        
+        
 
 @app.post("/recipes")
 async def create_recipe(recipe: RecipeCreate):
@@ -495,6 +799,16 @@ async def parse_recipe(query: RecipeQuery):
             "original_text": recipe_text
         }
         
+        # First, clean up any placeholder ingredients in the database
+        if supabase_db.is_connected():
+            try:
+                cleanup_count = supabase_db.cleanup_placeholder_ingredients()
+                if cleanup_count > 0:
+                    print(f"Cleaned up {cleanup_count} placeholder ingredients before recipe processing")
+            except Exception as e:
+                print(f"Error cleaning up placeholder ingredients: {e}")
+                # Continue even if cleanup fails
+        
         # Add AI-generated images if enabled
         if image_generator:
             try:
@@ -596,6 +910,11 @@ async def parse_recipe(query: RecipeQuery):
                     # Add the ID from the database to the response
                     structured_recipe["id"] = saved_recipe.get("id")
                     print(f"Saved recipe to database with ID: {saved_recipe.get('id')}")
+                    
+                    # Run another cleanup after recipe creation
+                    cleanup_count = supabase_db.cleanup_placeholder_ingredients()
+                    if cleanup_count > 0:
+                        print(f"Cleaned up {cleanup_count} placeholder ingredients after recipe creation")
                 else:
                     print("Failed to save recipe to database")
             except Exception as e:
