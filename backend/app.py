@@ -8,6 +8,7 @@ import os
 import json
 import time
 import random
+import re
 from dotenv import load_dotenv
 from db_manager import db as supabase_db
 from oci_storage import OCIObjectStorage
@@ -21,9 +22,13 @@ os.makedirs("static/animations/ingredients", exist_ok=True)
 
 assistant = RecipeAssistant()
 
+# Force reload .env file
+load_dotenv(override=True)
+
 oci_par_url = os.getenv("OCI_PAR_URL")
 if not oci_par_url:
     print("Warning: OCI_PAR_URL not found in environment variables. Cloud storage will be disabled.")
+    
 oci_storage = OCIObjectStorage(oci_par_url or "")
 
 # Initialize FastAPI
@@ -157,8 +162,6 @@ def get_action_animation(action: str):
         return {"animation_url": f"/static/animations/actions/{action}.json", "data": animation_data}
     else:
         # Placeholder for AI generation logic
-        # In a real implementation, this would call an AI service
-        # For demo purposes, we'll return a mock response
         return {
             "animation_url": None,
             "message": "Animation not found, would generate with AI in production",
@@ -170,7 +173,6 @@ async def generate_animation(request: AnimationRequest):
     """Generate a custom animation based on recipe step"""
     try:
         # This is where you would call the AI generation service
-        # For demo purposes, we'll simulate a delay and return a mock response
         time.sleep(1)  # Simulate API call
         
         # In a real implementation, this would store the generated animation
@@ -438,155 +440,294 @@ async def create_recipe(recipe: RecipeCreate):
 
 @app.post("/recipe/parse")
 async def parse_recipe(query: RecipeQuery):
-    """Parse a recipe description into structured format with animations"""
+    """Parse a recipe description into structured format with animations and return matching recipes"""
     try:
-        # Get the recipe from the assistant
-        recipe_text = assistant.get_recipe(query.query)
-        
-        # In a real implementation, this would use an LLM to parse the text response
-        # into structured data with animation actions
-        # For demo purposes, we'll return the sushi rice recipe
-        
-        # Sample structured recipe
-        structured_recipe = {
-            "title": "Sushi Rice",
-            "description": "Perfect sushi rice for making your favorite sushi rolls.",
-            "prepTime": "10 mins",
-            "cookTime": "20 mins",
-            "servings": 4,
-            "ingredients": [
-                {"name": "Japanese short-grain rice", "quantity": "2 cups"},
-                {"name": "Water", "quantity": "2 cups"},
-                {"name": "Rice vinegar", "quantity": "1/4 cup"},
-                {"name": "Sugar", "quantity": "2 tablespoons"},
-                {"name": "Salt", "quantity": "1 teaspoon"}
-            ],
-            "equipment": [
-                {"name": "Rice cooker"},
-                {"name": "Wooden spoon"},
-                {"name": "Large bowl"},
-                {"name": "Fan (optional)"}
-            ],
-            "steps": [
-                {
-                    "id": 1,
-                    "instruction": "Rinse the rice in cold water until the water runs clear, about 2-3 times.",
-                    "action": "stir",
-                    "ingredients": [
-                        {"name": "Japanese short-grain rice", "quantity": "2 cups"},
-                        {"name": "Water"}
-                    ],
-                    "equipment": [
-                        {"name": "Large bowl"}
-                    ]
-                },
-                {
-                    "id": 2,
-                    "instruction": "Add the rinsed rice and 2 cups of water to the rice cooker and cook according to the manufacturer\\'s instructions.",
-                    "action": "cook_rice",
-                    "ingredients": [
-                        {"name": "Japanese short-grain rice"},
-                        {"name": "Water", "quantity": "2 cups"}
-                    ],
-                    "equipment": [
-                        {"name": "Rice cooker"}
-                    ]
-                },
-                {
-                    "id": 3,
-                    "instruction": "In a small bowl, mix the rice vinegar, sugar, and salt until the sugar and salt are dissolved.",
-                    "action": "stir",
-                    "ingredients": [
-                        {"name": "Rice vinegar", "quantity": "1/4 cup"},
-                        {"name": "Sugar", "quantity": "2 tablespoons"},
-                        {"name": "Salt", "quantity": "1 teaspoon"}
-                    ],
-                    "equipment": [
-                        {"name": "Small bowl"},
-                        {"name": "Whisk"}
-                    ]
-                },
-                {
-                    "id": 4,
-                    "instruction": "Once the rice is cooked, transfer it to a large wooden bowl and pour the vinegar mixture over it.",
-                    "action": "stir",
-                    "ingredients": [
-                        {"name": "Cooked rice"},
-                        {"name": "Vinegar mixture"}
-                    ],
-                    "equipment": [
-                        {"name": "Large wooden bowl"},
-                        {"name": "Wooden spoon"}
-                    ]
-                },
-                {
-                    "id": 5,
-                    "instruction": "Gently fold the rice with a wooden spoon to mix the vinegar mixture evenly. Be careful not to mash the rice.",
-                    "action": "stir",
-                    "ingredients": [
-                        {"name": "Seasoned rice"}
-                    ],
-                    "equipment": [
-                        {"name": "Wooden spoon"}
-                    ]
-                },
-                {
-                    "id": 6,
-                    "instruction": "Fan the rice as you mix it to cool it down quickly and give it a nice shine.",
-                    "action": "stir",
-                    "ingredients": [
-                        {"name": "Seasoned rice"}
-                    ],
-                    "equipment": [
-                        {"name": "Fan (optional)"},
-                        {"name": "Wooden spoon"}
-                    ]
-                }
-            ],
-            "original_text": recipe_text
-        }
-        
-        # First, clean up any placeholder ingredients in the database
+        # Search for matching recipes in the database first
+        matching_recipes = []
         if supabase_db.is_connected():
             try:
-                cleanup_count = supabase_db.cleanup_placeholder_ingredients()
-                if cleanup_count > 0:
-                    pass  # Removed debug print
-            except Exception as e:
-                pass  # Continue even if cleanup fails
-        
-        # Save the recipe to Supabase if connected
-        if supabase_db.is_connected():
-            try:
-                # Convert to the format needed for database
-                recipe_to_save = {
-                    "title": structured_recipe["title"],
-                    "description": structured_recipe["description"],
-                    "prep_time": structured_recipe["prepTime"],
-                    "cook_time": structured_recipe["cookTime"],
-                    "servings": structured_recipe["servings"],
-                    "ingredients": structured_recipe["ingredients"],
-                    "equipment": structured_recipe["equipment"],
-                    "steps": structured_recipe["steps"],
-                    "original_text": structured_recipe["original_text"]
+                print(f"Searching for recipes matching: '{query.query}'")
+                
+                # Use the enhanced database search function to find relevant recipes
+                matching_recipes = supabase_db.search_recipes(query.query)
+                print(f"Found {len(matching_recipes)} matching recipes")
+                
+                # If we found matching recipes, return them
+                if matching_recipes:
+                    return {
+                        "matching_recipes": matching_recipes,
+                        "count": len(matching_recipes),
+                        "query": query.query
+                    }
+                
+                # If no matching recipes, generate one with AI
+                print(f"No recipes found for '{query.query}', generating with AI...")
+                
+                # Get a recipe from the AI assistant
+                recipe_text = assistant.get_recipe(query.query)
+                
+                # Extract title from the first line (should be markdown heading now)
+                title_match = re.search(r'#\s*(.+)', recipe_text.split('\n')[0])
+                if title_match:
+                    title = title_match.group(1).strip()
+                else:
+                    # Fallback to query if heading not found
+                    title = query.query.title()
+                    
+                # Clean up the title - ensure it's not just an ingredient name
+                # Remove common words like "recipe" or "dish"
+                title = re.sub(r'\b(?:recipe|dish|how to make|directions for)\b', '', title, flags=re.IGNORECASE).strip()
+                
+                # If title became too short, use original query
+                if len(title) < 3:
+                    title = query.query.title()
+                
+                # Create a structured recipe
+                structured_recipe = {
+                    "title": title,
+                    "description": f"AI-generated recipe for {query.query}",
+                    "prep_time": "20 mins",
+                    "cook_time": "30 mins",
+                    "servings": 4,
+                    "ingredients": [],
+                    "equipment": [],
+                    "steps": [],
+                    "original_text": recipe_text
                 }
                 
-                saved_recipe = supabase_db.save_recipe(recipe_to_save)
-                if saved_recipe:
-                    # Add the ID from the database to the response
-                    structured_recipe["id"] = saved_recipe.get("id")
-
-                    # Run another cleanup after recipe creation
-                    cleanup_count = supabase_db.cleanup_placeholder_ingredients()
-                    if cleanup_count > 0:
-                        pass  # Removed debug print
-                else:
-                    pass  # Removed debug print
-            except Exception as e:
-                pass  # Continue without saving if there's an error
-        
-        return structured_recipe
+                # Parse equipment section from the formatted AI response
+                equipment_list = []
+                
+                # Find the Equipment section (should be between ## Equipment and ## Ingredients)
+                equipment_match = re.search(r'##\s*Equipment\s*([\s\S]+?)##\s*Ingredients', recipe_text)
+                if equipment_match:
+                    equipment_section = equipment_match.group(1).strip()
+                    
+                    # Extract each item from the list
+                    for line in equipment_section.split('\n'):
+                        # Look for list items with the format "- Item"
+                        item_match = re.match(r'-\s+(.+)', line.strip())
+                        if item_match:
+                            equipment_name = item_match.group(1).strip()
+                            # Skip "list at least X items" instruction
+                            if not equipment_name.startswith('(') and not 'needed' in equipment_name.lower():
+                                equipment_list.append({"name": equipment_name})
+                
+                # Check if essential cooking equipment is missing and add it if necessary
+                equipment_names_lower = [e["name"].lower() for e in equipment_list]
+                
+                # Check for baking recipes
+                is_baking_recipe = any(word in recipe_text.lower() for word in ["bake", "oven", "degrees", "°f", "°c", "350°", "375°"])
+                if is_baking_recipe and not any(word in name for name in equipment_names_lower for word in ["oven"]):
+                    equipment_list.append({"name": "Oven"})
+                
+                # Check for stovetop cooking
+                is_stovetop_recipe = any(word in recipe_text.lower() for word in ["simmer", "boil", "sauté", "fry", "skillet", "pan", "pot", "heat"])
+                if is_stovetop_recipe and not any(word in name for name in equipment_names_lower for word in ["stove", "stovetop", "burner", "range"]):
+                    equipment_list.append({"name": "Stovetop/Range"})
+                
+                # Check for essential prep tools
+                if not any(word in name for name in equipment_names_lower for word in ["knife", "cutting"]):
+                    for ingredient in structured_recipe["ingredients"]:
+                        if any(word in ingredient["name"].lower() for word in ["chop", "dice", "mince", "slice", "cut"]):
+                            equipment_list.append({"name": "Knife and cutting board"})
+                            break
+                
+                # Fallback if still no equipment found
+                if not equipment_list:
+                    equipment_list = [{"name": "Cooking utensils as needed"}]
+                
+                structured_recipe["equipment"] = equipment_list
+                
+                # Parse ingredients section from the formatted AI response
+                ingredients_list = []
+                
+                # Find the Ingredients section (should be between ## Ingredients and ## Instructions)
+                ingredients_match = re.search(r'##\s*Ingredients\s*([\s\S]+?)##\s*Instructions', recipe_text)
+                if ingredients_match:
+                    ingredients_section = ingredients_match.group(1).strip()
+                    
+                    # Extract each ingredient from the list
+                    for line in ingredients_section.split('\n'):
+                        # Look for list items with the format "- Quantity Ingredient"
+                        item_match = re.match(r'-\s+(.+)', line.strip())
+                        if item_match:
+                            ingredient_text = item_match.group(1).strip()
+                            
+                            # Skip instructions line
+                            if ingredient_text.startswith('(') or 'ingredient' in ingredient_text.lower():
+                                continue
+                                
+                            # Try to separate quantity from ingredient name
+                            quantity_match = re.match(r'^([\d\s/]+(?:\s*(?:cup|tablespoon|teaspoon|pound|g|oz|ml|tbsp|tsp|lb|ounce|gram)s?))\s+(.+)$', ingredient_text)
+                            
+                            if quantity_match:
+                                # We have a quantity and name
+                                quantity = quantity_match.group(1).strip()
+                                name = quantity_match.group(2).strip()
+                                # Capitalize the first letter of the ingredient name
+                                name = name[0].upper() + name[1:] if name else ""
+                                ingredients_list.append({"name": name, "quantity": quantity})
+                            else:
+                                # No clear quantity/name separation
+                                # Capitalize the first letter
+                                capitalized_text = ingredient_text[0].upper() + ingredient_text[1:] if ingredient_text else ""
+                                ingredients_list.append({"name": capitalized_text, "quantity": ""})
+                
+                structured_recipe["ingredients"] = ingredients_list
+                
+                # Parse steps section from the formatted AI response
+                steps_list = []
+                
+                # Find the Instructions section (should be after ## Instructions)
+                instructions_match = re.search(r'##\s*Instructions\s*([\s\S]+?)$', recipe_text)
+                if instructions_match:
+                    instructions_section = instructions_match.group(1).strip()
+                    
+                    # Extract each step
+                    step_id = 1
+                    for line in instructions_section.split('\n'):
+                        # Look for numbered steps with the format "1. Step instructions"
+                        step_match = re.match(r'(\d+)\.\s+(.+)', line.strip())
+                        if step_match:
+                            step_num = int(step_match.group(1))
+                            step_text = step_match.group(2).strip()
+                            
+                            # Skip instruction explanation line
+                            if step_text.startswith('(') or 'detailed steps' in step_text.lower():
+                                continue
+                            
+                            # Extract ingredients mentioned in this step
+                            step_ingredients = []
+                            step_text_lower = step_text.lower()
+                            
+                            for ingredient in structured_recipe["ingredients"]:
+                                ingredient_name = ingredient["name"].lower()
+                                
+                                # Skip very short ingredient names (like "a", "of", etc) to avoid false matches
+                                if len(ingredient_name) <= 2:
+                                    continue
+                                    
+                                # Check for ingredient name as a standalone word (not part of another word)
+                                if re.search(r'\b' + re.escape(ingredient_name) + r'\b', step_text_lower):
+                                    step_ingredients.append({"name": ingredient["name"]})
+                            
+                            # Extract equipment mentioned in this step
+                            step_equipment = []
+                            
+                            for equip in structured_recipe["equipment"]:
+                                equip_name = equip["name"].lower()
+                                
+                                # Skip very short equipment names to avoid false matches
+                                if len(equip_name) <= 2:
+                                    continue
+                                    
+                                # Check for equipment name as a standalone word or partial match for common equipment
+                                if re.search(r'\b' + re.escape(equip_name) + r'\b', step_text_lower) or (
+                                   # Allow partial matches for common equipment types
+                                   any(word in equip_name for word in ["bowl", "pan", "pot", "mixer", "oven"]) and
+                                   any(word in step_text_lower for word in ["bowl", "pan", "pot", "mixer", "oven"])
+                                ):
+                                    step_equipment.append({"name": equip["name"]})
+                            
+                            # Determine action based on step text
+                            action = "cook"  # Default action
+                            
+                            # Try to determine a more specific action
+                            action_keywords = {
+                                "mix": ["mix", "stir", "whisk", "blend", "combine", "beat", "fold"],
+                                "chop": ["chop", "dice", "mince", "cut", "slice", "julienne"],
+                                "cook": ["cook", "bake", "roast", "fry", "sauté", "simmer", "boil", "grill"],
+                                "heat": ["heat", "warm", "preheat"],
+                                "cool": ["cool", "chill", "refrigerate", "freeze"]
+                            }
+                            
+                            for act, keywords in action_keywords.items():
+                                if any(kw in step_text_lower for kw in keywords):
+                                    action = act
+                                    break
+                            
+                            # Make sure all steps have some equipment and ingredients for better visualization
+                            
+                            # We'll be more conservative about adding equipment to steps
+                            # Only add equipment when it's highly likely to be used in that step
+                            # This prevents weird associations like cake pans for mixing ingredients
+                            
+                            # Only add ingredient/equipment if it's explicitly mentioned in the step
+                            # We won't add additional ingredients that aren't mentioned in the step
+                            # This keeps the recipe display more accurate
+                            
+                            # However, we should ensure mixing steps have bowls and cooking steps have cooking equipment
+                            if not step_equipment and structured_recipe["equipment"]:
+                                # Limit automatic equipment association to only certain key actions
+                                if action == "mix" and "bowl" in step_text_lower:
+                                    # Find a bowl in the equipment list
+                                    for e in structured_recipe["equipment"]:
+                                        if "bowl" in e["name"].lower():
+                                            step_equipment.append({"name": e["name"]})
+                                            break
+                                elif action == "cook" and any(w in step_text_lower for w in ["pan", "bake", "oven"]):
+                                    # Find a cooking vessel in the equipment list
+                                    for e in structured_recipe["equipment"]:
+                                        if any(w in e["name"].lower() for w in ["pan", "pot", "oven", "skillet"]):
+                                            step_equipment.append({"name": e["name"]})
+                                            break
+                            
+                            steps_list.append({
+                                "id": step_id,
+                                "instruction": step_text,
+                                "action": action,
+                                "ingredients": step_ingredients,
+                                "equipment": step_equipment
+                            })
+                            step_id += 1
+                
+                structured_recipe["steps"] = steps_list
+                
+                # Save the AI-generated recipe to the database
+                if supabase_db.is_connected():
+                    try:
+                        print("Saving AI-generated recipe to database")
+                        saved_recipe = supabase_db.save_recipe(structured_recipe)
+                        if saved_recipe and saved_recipe.get("id"):
+                            structured_recipe["id"] = saved_recipe.get("id")
+                            print(f"Saved new recipe with ID: {saved_recipe.get('id')}")
+                    except Exception as save_err:
+                        print(f"Error saving recipe: {save_err}")
+                
+                # Return the AI-generated recipe
+                return {
+                    "matching_recipes": [structured_recipe],
+                    "count": 1,
+                    "query": query.query,
+                    "ai_generated": True
+                }
+                
+            except Exception as search_err:
+                print(f"ERROR in recipe search: {search_err}")
+                import traceback
+                traceback.print_exc()
+                
+                # Return an empty result set with error info
+                return {
+                    "matching_recipes": [],
+                    "count": 0,
+                    "query": query.query,
+                    "error": str(search_err)
+                }
+        else:
+            # Database not connected
+            print("WARNING: Database not connected, cannot search for recipes")
+            return {
+                "matching_recipes": [],
+                "count": 0,
+                "query": query.query,
+                "error": "Database not connected"
+            }
     except Exception as e:
+        print(f"ERROR in parse_recipe: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":

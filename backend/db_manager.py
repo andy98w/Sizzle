@@ -156,21 +156,121 @@ class SupabaseManager:
             return None
     
     def search_recipes(self, query: str) -> List[Dict[str, Any]]:
-        """Search for recipes matching the query"""
+        """Search for recipes matching the query and return the 10 most relevant results"""
         if not self.client:
             return []
             
         try:
-            # Use PostgreSQL full-text search
-            # This assumes you've set up a text search index on the title and description
-            result = self.client.table('recipes').select('*').textSearch('title', query).execute()
+            # Split the query into words for more flexible matching
+            query_terms = query.lower().split()
+            all_recipes = []
             
-            if result.data:
-                return result.data
-            return []
+            # First try exact title match with PostgreSQL full-text search
+            try:
+                title_result = self.client.table('recipes').select('*').textSearch('title', query).execute()
+                if title_result.data:
+                    all_recipes.extend(title_result.data)
+            except Exception:
+                pass
+                
+            # Then try description search
+            try:
+                desc_result = self.client.table('recipes').select('*').textSearch('description', query).execute()
+                if desc_result.data:
+                    # Add results not already included
+                    for recipe in desc_result.data:
+                        if not any(r.get('id') == recipe.get('id') for r in all_recipes):
+                            all_recipes.append(recipe)
+            except Exception:
+                pass
+                
+            # Also try matching any title words for better flexibility
+            try:
+                for term in query_terms:
+                    if len(term) >= 3:  # Only search for terms with at least 3 characters
+                        title_term_result = self.client.table('recipes').select('*').ilike('title', f'%{term}%').execute()
+                        if title_term_result.data:
+                            for recipe in title_term_result.data:
+                                if not any(r.get('id') == recipe.get('id') for r in all_recipes):
+                                    all_recipes.append(recipe)
+            except Exception:
+                pass
+                
+            # If still no results or fewer than expected, try ingredient-based search
+            if len(all_recipes) < 10:
+                try:
+                    # Get all recipes
+                    all_result = self.client.table('recipes').select('*').execute()
+                    
+                    if all_result.data:
+                        # Manual filtering for ingredient matching
+                        for recipe in all_result.data:
+                            # Skip if already in results
+                            if any(r.get('id') == recipe.get('id') for r in all_recipes):
+                                continue
+                                
+                            # Check if any ingredients match the query
+                            ingredients = recipe.get('ingredients', [])
+                            if ingredients and isinstance(ingredients, list):
+                                for ingredient in ingredients:
+                                    if isinstance(ingredient, dict) and 'name' in ingredient:
+                                        ingredient_name = ingredient['name'].lower()
+                                        # Check if any query term appears in the ingredient name
+                                        if any(term in ingredient_name for term in query_terms):
+                                            all_recipes.append(recipe)
+                                            break
+                except Exception:
+                    pass
+                    
+            # Sort results by relevance (exact title match first, then description match, then ingredients)
+            def relevance_score(recipe):
+                recipe_title = recipe.get('title', '').lower()
+                score = 0
+                
+                # Exact title match gets highest score
+                if query.lower() == recipe_title:
+                    score += 100
+                # Partial title match
+                elif query.lower() in recipe_title:
+                    score += 50
+                # Word match in title
+                else:
+                    for term in query_terms:
+                        if term in recipe_title:
+                            score += 10
+                
+                # Check description
+                description = recipe.get('description', '').lower()
+                if query.lower() in description:
+                    score += 5
+                else:
+                    for term in query_terms:
+                        if term in description:
+                            score += 2
+                
+                # Check ingredients
+                ingredients = recipe.get('ingredients', [])
+                if ingredients and isinstance(ingredients, list):
+                    for ingredient in ingredients:
+                        if isinstance(ingredient, dict) and 'name' in ingredient:
+                            ingredient_name = ingredient['name'].lower()
+                            if query.lower() in ingredient_name:
+                                score += 3
+                            else:
+                                for term in query_terms:
+                                    if term in ingredient_name:
+                                        score += 1
+                
+                return score
+            
+            # Sort by relevance score (highest first)
+            all_recipes.sort(key=relevance_score, reverse=True)
+            
+            # Limit to 10 most relevant results
+            return all_recipes[:10]
                 
         except Exception as e:
-            
+            print(f"Error in search_recipes: {e}")
             return []
     
     def list_recent_recipes(self, limit: int = 10) -> List[Dict[str, Any]]:
