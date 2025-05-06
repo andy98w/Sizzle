@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
 import { FaUtensils, FaClock, FaUsers, FaArrowRight } from 'react-icons/fa';
+import { API_URL } from '@/config';
 
 interface Recipe {
   id: number;
@@ -24,7 +25,7 @@ export default function RecipesPage() {
     const fetchRecipes = async () => {
       try {
         setIsLoading(true);
-        const response = await fetch('http://localhost:8000/recipes');
+        const response = await fetch(`${API_URL}/recipes`);
         if (!response.ok) {
           throw new Error('Failed to fetch recipes');
         }
@@ -44,7 +45,8 @@ export default function RecipesPage() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-gray-50 py-10">
+    <div className="h-full min-h-screen">
+      
       <div className="container mx-auto px-4 max-w-5xl">
         <motion.div
           className="bg-white rounded-xl shadow-md p-8 mb-8"
@@ -56,18 +58,18 @@ export default function RecipesPage() {
             <div className="w-12 h-12 bg-primary-500 text-white rounded-full flex items-center justify-center mr-4">
               <FaUtensils size={24} />
             </div>
-            <h1 className="text-3xl font-bold text-gray-800">My Recipes</h1>
+            <h1 className="text-3xl font-bold text-gray-800">Recipe Collection</h1>
           </div>
           
           <p className="text-gray-600 mb-6">
-            Browse your saved recipes or search for new ones to add to your collection.
+            Browse your favorite recipes or search for new ones to try.
           </p>
           
           <Link 
             href="/animated-recipe"
             className="inline-flex items-center px-4 py-2 bg-primary-500 text-white rounded-md hover:bg-primary-600 transition-colors"
           >
-            <span>Find New Recipes</span>
+            <span>Create New Recipe</span>
             <FaArrowRight className="ml-2" />
           </Link>
         </motion.div>
@@ -97,13 +99,13 @@ export default function RecipesPage() {
             </div>
             <h2 className="text-xl font-bold text-gray-800 mb-2">No Recipes Found</h2>
             <p className="text-gray-600 mb-6">
-              It looks like you haven't saved any recipes yet. Search for recipes to get started!
+              Your recipe collection is empty. Create a new recipe to get started!
             </p>
             <Link 
               href="/animated-recipe"
               className="inline-flex items-center px-4 py-2 bg-primary-500 text-white rounded-md hover:bg-primary-600 transition-colors"
             >
-              <span>Find Recipes Now</span>
+              <span>Create New Recipe</span>
               <FaArrowRight className="ml-2" />
             </Link>
           </motion.div>

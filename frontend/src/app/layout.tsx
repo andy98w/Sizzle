@@ -1,7 +1,7 @@
 import './globals.css'
 import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
-import Navigation from '@/components/Navigation'
+import RootLayoutClient from '@/components/RootLayoutClient'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -10,6 +10,7 @@ export const metadata: Metadata = {
   description: 'AI-powered recipe assistant with animated step-by-step cooking instructions',
 }
 
+// Server component for layout
 export default function RootLayout({
   children,
 }: {
@@ -17,10 +18,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={inter.className}>
-        <Navigation />
-        <main>{children}</main>
+      <body className={inter.className} style={{ margin: 0, padding: 0, minHeight: '100vh', backgroundColor: 'transparent' }}>
+        <RootLayoutClient>{children}</RootLayoutClient>
       </body>
     </html>
-  )
+  );
 }

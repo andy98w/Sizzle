@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
+import { API_URL } from '@/config';
 
 export default function TestPage() {
   const [supabaseStatus, setSupabaseStatus] = useState<string | null>(null);
@@ -11,7 +12,7 @@ export default function TestPage() {
   const checkApiStatus = async () => {
     try {
       setIsLoading(true);
-      const response = await fetch('http://localhost:8000/api-status');
+      const response = await fetch(`${API_URL}/api-status`);
       const data = await response.json();
       
       setSupabaseStatus(data.supabase?.status || 'error');

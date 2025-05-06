@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { RecipeAnimation, IngredientVisual, EquipmentVisual, CookingAction } from './AnimationLibrary';
 import { FaArrowLeft, FaArrowRight, FaUtensils, FaListUl } from 'react-icons/fa';
+import { API_URL } from '@/config';
 
 interface Ingredient {
   name: string;
@@ -219,7 +220,7 @@ const RecipeStepCarousel: React.FC<RecipeStepCarouselProps> = ({ recipe }) => {
                   {recipe.steps[currentStep - 1].step_image ? (
                     <div className="flex flex-col items-center">
                       <img
-                        src={`http://localhost:8000${recipe.steps[currentStep - 1].step_image}`}
+                        src={`${API_URL}${recipe.steps[currentStep - 1].step_image}`}
                         alt={`Step ${currentStep}: ${recipe.steps[currentStep - 1].instruction}`}
                         className="w-full max-w-xs mx-auto rounded-lg shadow-md mb-4"
                         onError={(e) => {
@@ -241,7 +242,7 @@ const RecipeStepCarousel: React.FC<RecipeStepCarouselProps> = ({ recipe }) => {
                   ) : recipe.steps[currentStep - 1].action_image ? (
                     <div className="flex flex-col items-center">
                       <img
-                        src={`http://localhost:8000${recipe.steps[currentStep - 1].action_image}`}
+                        src={`${API_URL}${recipe.steps[currentStep - 1].action_image}`}
                         alt={`${recipe.steps[currentStep - 1].action} action`}
                         className="w-full max-w-xs mx-auto rounded-lg shadow-md mb-4"
                         onError={(e) => {

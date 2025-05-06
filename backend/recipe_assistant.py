@@ -1,23 +1,55 @@
+"""
+Recipe Assistant module for generating structured recipes.
+
+This module provides functionality to generate detailed, structured recipes
+from user queries using large language models.
+"""
+
 import os
-from typing import List, Dict, Any
-from dotenv import load_dotenv
+import json
+import re
+from typing import List, Dict, Any, Optional
 
-load_dotenv()
+# Local imports
+from setup_env import setup_virtual_env
+setup_virtual_env()
 
+# Import from third-party libraries
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_openai import ChatOpenAI
 
+# Local imports
+from config import OPENAI_API_KEY, OPENAI_MODEL, OPENAI_TIMEOUT
+from utils import logger, log_exception, parse_json_safely
+
 class RecipeAssistant:
+    """Assistant for generating structured recipe data."""
+    
     def __init__(self, api_key: str = None):
-        if api_key:
-            os.environ["OPENAI_API_KEY"] = api_key
-        elif "OPENAI_API_KEY" not in os.environ:
-            raise ValueError("OpenAI API key is required. Set it as an environment variable or pass it to the constructor.")
+        """
+        Initialize the recipe assistant.
         
-        self.llm = ChatOpenAI(model="gpt-3.5-turbo")
+        Args:
+            api_key: Optional OpenAI API key (defaults to environment variable)
+        """
+        # Use provided API key or environment variable
+        self.api_key = api_key or OPENAI_API_KEY
+        
+        if not self.api_key:
+            logger.warning("OpenAI API key is not set. Recipe generation will not work.")
+            
+        # Initialize the language model
+        self.llm = ChatOpenAI(
+            model=OPENAI_MODEL,
+            openai_api_key=self.api_key,
+            request_timeout=OPENAI_TIMEOUT
+        )
+        
+        # Initialize chat history
         self.chat_history = []
         
+        # Setup the recipe generation prompt
         self.recipe_prompt = ChatPromptTemplate.from_messages([
             ("system", """You are an expert chef and cooking instructor who provides detailed, structured recipes.
 
@@ -28,221 +60,182 @@ class RecipeAssistant:
             ## Equipment
             - [Equipment item 1]
             - [Equipment item 2]
-            - [Equipment item 3]
-            (Always include ALL necessary equipment including oven, stove, or other heat sources if used. List EVERY tool needed for preparation and cooking. Don't assume any equipment is obvious or can be omitted.)
+            - ...
 
             ## Ingredients
             - [Quantity] [Ingredient 1]
             - [Quantity] [Ingredient 2]
-            (list all ingredients with precise measurements)
+            - ...
+
+            ## Preparation Time
+            [Time in minutes or hours]
+
+            ## Cooking Time
+            [Time in minutes or hours]
+
+            ## Servings
+            [Number of servings]
 
             ## Instructions
-            1. [First step]
-            2. [Second step]
-            (provide detailed steps in a logical order)
+            1. [Step 1 instruction]
+               Action: [Main cooking action]
+               Ingredients: [Ingredients used in step]
+               Equipment: [Equipment used in step]
+            
+            2. [Step 2 instruction]
+               Action: [Main cooking action]
+               Ingredients: [Ingredients used in step]
+               Equipment: [Equipment used in step]
+            
+            ...and so on for all steps.
 
-            Important formatting rules:
-            - DO NOT include any text that starts with "Sure", "Here's", or any other introductory phrases
-            - DO NOT include any "Ingredient Substitutions" section
-            - DO NOT use double asterisks (**) for formatting
-            - DO NOT include any notes or tips at the end
-            - DO NOT use markdown headings (###) in the steps
-            - For mixed fractions, use format "1 1/2" not "1 and 1/2"
-            - Keep the response strictly structured as above
+            ## Description
+            [Brief description of the dish and its origins or characteristics]
+            
+            Remember, actions should be concise (single word or short phrase) like "chop", "mix", "bake", "stir", etc. Each step should only include ingredients and equipment actually used in that step.
             """),
             MessagesPlaceholder(variable_name="chat_history"),
-            ("human", "{input}")
+            ("human", "{recipe_query}")
         ])
         
-        self.ingredient_prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are an expert chef who knows all about cooking ingredients.
+        # Setup the JSON conversion prompt
+        self.json_prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are a helpful AI assistant that converts recipe text into JSON format.
             
-            When asked about common cooking ingredients, provide a list of the most common ingredients used in cooking around the world.
+            Convert the recipe text into a valid JSON object with this structure:
             
-            Format your response as a JSON array of strings with just the ingredient names.
+            {{
+              "title": "Recipe Title",
+              "equipment": [
+                {{"name": "Equipment item 1"}},
+                {{"name": "Equipment item 2"}}
+              ],
+              "ingredients": [
+                {{"name": "Ingredient 1", "quantity": "Amount"}},
+                {{"name": "Ingredient 2", "quantity": "Amount"}}
+              ],
+              "prep_time": "Preparation time",
+              "cook_time": "Cooking time",
+              "servings": 4,
+              "steps": [
+                {{
+                  "id": 1,
+                  "instruction": "Step instruction",
+                  "action": "Main cooking action (single word or short phrase)",
+                  "ingredients": [
+                    {{"name": "Ingredient used", "quantity": "Amount used (if specified)"}}
+                  ],
+                  "equipment": [
+                    {{"name": "Equipment used"}}
+                  ]
+                }}
+              ],
+              "description": "Recipe description"
+            }}
+            
+            Important notes:
+            1. Only include ingredients and equipment actually used in each step
+            2. Actions should be concise verbs like "chop", "mix", "bake"
+            3. For servings, convert text to an integer
+            4. Make sure all nested arrays have the correct structure
+            5. Ensure the JSON is valid - use double quotes for keys and string values
+            6. Output ONLY the JSON object with no additional text or explanation
             """),
-            ("human", "{input}")
+            ("human", "{recipe_text}\n\nTitle: {title}")
         ])
+    
+    def generate_recipe(self, query: str) -> Dict[str, Any]:
+        """
+        Generate a structured recipe from a user query.
         
-        self.recipe_chain = self.recipe_prompt | self.llm
-        self.ingredient_chain = self.ingredient_prompt | self.llm
-    
-    def get_recipe(self, user_query: str) -> str:
-        """Process a user query about a recipe and return the response"""
-        response = self.recipe_chain.invoke({
-            "input": user_query,
-            "chat_history": self.chat_history
-        })
-        
-        self.chat_history.append(HumanMessage(content=user_query))
-        self.chat_history.append(AIMessage(content=response.content))
-        
-        return response.content
-    
-    def ask_followup(self, question: str) -> str:
-        """Ask a follow-up question about the current recipe"""
-        return self.get_recipe(question)
-    
-    def reset_conversation(self):
-        """Reset the chat history to start a new recipe conversation"""
-        self.chat_history = []
-    
-    def get_common_ingredients(self, count: int = 10) -> List[str]:
-        """Get a list of common cooking ingredients"""
+        Args:
+            query: User query for a recipe
+            
+        Returns:
+            Structured recipe data as a dictionary
+        """
+        if not self.api_key:
+            logger.error("Cannot generate recipe: OpenAI API key is not set")
+            return None
+            
         try:
-            response = self.ingredient_chain.invoke({
-                "input": f"What are the {count} most common cooking ingredients? Return just a JSON array."
-            })
+            # Generate the recipe in markdown format
+            recipe_chain = self.recipe_prompt | self.llm
+            recipe_text = recipe_chain.invoke({
+                "recipe_query": query,
+                "chat_history": self.chat_history
+            }).content
             
-            # Try to extract JSON from the response
-            import re
-            import json
+            # Extract title from recipe text
+            title_match = re.search(r'^# (.+?)$', recipe_text, re.MULTILINE)
+            title = title_match.group(1) if title_match else "Recipe"
             
-            # Find JSON array pattern in the response
-            json_match = re.search(r'\[.*\]', response.content, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(0)
-                ingredients = json.loads(json_str)
-                return ingredients[:count]  # Limit to requested count
+            # Convert the markdown to JSON
+            json_chain = self.json_prompt | self.llm
+            json_text = json_chain.invoke({
+                "recipe_text": recipe_text,
+                "title": title
+            }).content
             
-            # Fallback to a larger list of generated ingredients
-            large_ingredient_list = []
-            
-            # Core ingredients (will be in the list regardless of count)
-            core_ingredients = [
-                "Salt", "Pepper", "Olive oil", "Garlic", "Onion", "Butter", "Rice", 
-                "Flour", "Sugar", "Eggs", "Tomatoes", "Potatoes", "Chicken", "Beef", "Carrots"
-            ]
-            large_ingredient_list.extend(core_ingredients)
-            
-            # If we need more than the core ingredients, generate a systematic list
-            if count > len(core_ingredients):
-                # Vegetables
-                vegetables = [
-                    "Broccoli", "Spinach", "Bell Pepper", "Zucchini", "Eggplant", "Cucumber", 
-                    "Lettuce", "Kale", "Cabbage", "Cauliflower", "Asparagus", "Green Beans",
-                    "Corn", "Peas", "Brussels Sprouts", "Artichoke", "Celery", "Radish",
-                    "Sweet Potato", "Turnip", "Beet", "Rutabaga", "Parsnip", "Leek",
-                    "Shallot", "Green Onion", "Red Onion", "White Onion", "Yellow Onion",
-                    "Cherry Tomato", "Roma Tomato", "Grape Tomato", "Beefsteak Tomato"
-                ]
-                large_ingredient_list.extend(vegetables)
+            # Parse the JSON
+            try:
+                # Clean up the response to ensure it's valid JSON
+                # Remove any markdown code block markers
+                json_text = re.sub(r'^```json\s*', '', json_text)
+                json_text = re.sub(r'\s*```$', '', json_text)
                 
-                # Fruits
-                fruits = [
-                    "Apple", "Banana", "Orange", "Lemon", "Lime", "Grapefruit", "Pineapple",
-                    "Strawberry", "Blueberry", "Raspberry", "Blackberry", "Grape", "Watermelon",
-                    "Cantaloupe", "Honeydew", "Kiwi", "Mango", "Papaya", "Peach", "Pear",
-                    "Plum", "Cherry", "Apricot", "Nectarine", "Pomegranate", "Fig", "Date",
-                    "Coconut", "Passion Fruit", "Dragon Fruit", "Guava", "Lychee", "Persimmon"
-                ]
-                large_ingredient_list.extend(fruits)
+                # Parse the JSON
+                recipe_data = json.loads(json_text)
                 
-                # Proteins
-                proteins = [
-                    "Ground Beef", "Steak", "Pork Chop", "Bacon", "Ham", "Sausage", "Hot Dog",
-                    "Turkey", "Duck", "Lamb", "Venison", "Bison", "Salmon", "Tuna", "Cod",
-                    "Shrimp", "Crab", "Lobster", "Clams", "Mussels", "Scallops", "Tofu",
-                    "Tempeh", "Seitan", "Lentils", "Chickpeas", "Black Beans", "Kidney Beans",
-                    "Pinto Beans", "Navy Beans", "Edamame"
-                ]
-                large_ingredient_list.extend(proteins)
+                # Ensure the data has the required structure
+                self._validate_recipe_data(recipe_data)
                 
-                # Dairy
-                dairy = [
-                    "Milk", "Heavy Cream", "Half-and-Half", "Buttermilk", "Yogurt", "Greek Yogurt",
-                    "Sour Cream", "Cream Cheese", "Cottage Cheese", "Ricotta Cheese", "Cheddar Cheese",
-                    "Swiss Cheese", "Mozzarella", "Parmesan", "Gouda", "Brie", "Blue Cheese",
-                    "Feta Cheese", "Goat Cheese", "Mascarpone", "Ice Cream", "Whipped Cream"
-                ]
-                large_ingredient_list.extend(dairy)
-                
-                # Grains
-                grains = [
-                    "White Rice", "Brown Rice", "Jasmine Rice", "Basmati Rice", "Arborio Rice",
-                    "Wild Rice", "Quinoa", "Couscous", "Barley", "Farro", "Oats", "Cornmeal",
-                    "Bread Crumbs", "White Bread", "Whole Wheat Bread", "Rye Bread", "Pita Bread",
-                    "Tortilla", "Pasta", "Spaghetti", "Penne", "Macaroni", "Lasagna Noodles",
-                    "Ramen Noodles", "Udon Noodles", "Rice Noodles", "Egg Noodles"
-                ]
-                large_ingredient_list.extend(grains)
-                
-                # Baking
-                baking = [
-                    "All-Purpose Flour", "Cake Flour", "Bread Flour", "Whole Wheat Flour",
-                    "Almond Flour", "Coconut Flour", "Baking Powder", "Baking Soda", "Yeast",
-                    "Granulated Sugar", "Brown Sugar", "Powdered Sugar", "Honey", "Maple Syrup",
-                    "Molasses", "Corn Syrup", "Vanilla Extract", "Almond Extract", "Cocoa Powder",
-                    "Chocolate Chips", "Cinnamon", "Nutmeg", "Ginger", "Cloves", "Allspice"
-                ]
-                large_ingredient_list.extend(baking)
-                
-                # Condiments and Sauces
-                condiments = [
-                    "Ketchup", "Mustard", "Mayonnaise", "Soy Sauce", "Worcestershire Sauce",
-                    "Hot Sauce", "BBQ Sauce", "Salsa", "Tomato Sauce", "Pasta Sauce", "Pesto",
-                    "Hummus", "Guacamole", "Salad Dressing", "Vinegar", "Apple Cider Vinegar",
-                    "Balsamic Vinegar", "Rice Vinegar", "Fish Sauce", "Oyster Sauce", "Hoisin Sauce",
-                    "Sriracha", "Tabasco", "Buffalo Sauce"
-                ]
-                large_ingredient_list.extend(condiments)
-                
-                # Oils and Fats
-                oils = [
-                    "Vegetable Oil", "Canola Oil", "Peanut Oil", "Sesame Oil", "Coconut Oil",
-                    "Avocado Oil", "Grapeseed Oil", "Shortening", "Lard", "Margarine", "Ghee"
-                ]
-                large_ingredient_list.extend(oils)
-                
-                # Nuts and Seeds
-                nuts = [
-                    "Almonds", "Peanuts", "Walnuts", "Pecans", "Cashews", "Pistachios",
-                    "Macadamia Nuts", "Brazil Nuts", "Hazelnuts", "Pine Nuts", "Sunflower Seeds",
-                    "Pumpkin Seeds", "Sesame Seeds", "Chia Seeds", "Flax Seeds", "Poppy Seeds"
-                ]
-                large_ingredient_list.extend(nuts)
-                
-                # Herbs and Spices
-                herbs = [
-                    "Basil", "Thyme", "Rosemary", "Sage", "Oregano", "Parsley", "Cilantro",
-                    "Dill", "Mint", "Chives", "Bay Leaves", "Cumin", "Coriander", "Paprika",
-                    "Turmeric", "Saffron", "Cardamom", "Curry Powder", "Chili Powder", 
-                    "Red Pepper Flakes", "Cayenne Pepper", "Black Pepper", "White Pepper"
-                ]
-                large_ingredient_list.extend(herbs)
-                
-                # Generate more systematically if we still need more
-                if count > len(large_ingredient_list):
-                    for i in range(len(large_ingredient_list), count):
-                        large_ingredient_list.append(f"Ingredient {i+1}")
-            
-            # Return the requested number of ingredients
-            return large_ingredient_list[:count]
-            
+                # Search for matching recipes (for demo purposes, return one recipe)
+                return {
+                    "matching_recipes": [recipe_data]
+                }
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse recipe JSON: {str(e)}")
+                logger.debug(f"Raw JSON: {json_text}")
+                return None
         except Exception as e:
-            print(f"Error getting common ingredients: {e}")
-            # Generate a systematic list of ingredients
-            return [f"Ingredient {i+1}" for i in range(count)]
-
-
-if __name__ == "__main__":
+            log_exception(e, "Error generating recipe")
+            return None
     
-    assistant = RecipeAssistant()
-    
-    print("🍲 Welcome to the Recipe Assistant! 🍲")
-    print("Ask about any recipe, and I'll provide you with detailed instructions.")
-    print("Type 'exit' to quit or 'reset' to start a new recipe conversation.")
-    
-    while True:
-        user_input = input("\nYou: ")
+    def _validate_recipe_data(self, data: Dict[str, Any]) -> None:
+        """
+        Validate and clean up recipe data.
         
-        if user_input.lower() == "exit":
-            print("Goodbye! Happy cooking!")
-            break
-        elif user_input.lower() == "reset":
-            assistant.reset_conversation()
-            print("Conversation reset. What recipe would you like to learn about?")
-            continue
-        
-        response = assistant.get_recipe(user_input)
-        print(f"\nChef: {response}")
+        Args:
+            data: Recipe data dictionary to validate
+            
+        Raises:
+            ValueError: If the data is missing required fields
+        """
+        # Ensure required top-level fields exist
+        required_fields = ["title", "ingredients", "steps", "description"]
+        for field in required_fields:
+            if field not in data:
+                raise ValueError(f"Recipe data missing required field: {field}")
+                
+        # Ensure servings is an integer
+        if "servings" in data and not isinstance(data["servings"], int):
+            try:
+                data["servings"] = int(data["servings"])
+            except (ValueError, TypeError):
+                data["servings"] = 4  # Default value
+                
+        # Ensure steps have required fields
+        for i, step in enumerate(data.get("steps", [])):
+            if "id" not in step:
+                step["id"] = i + 1
+            if "instruction" not in step:
+                raise ValueError(f"Step {i+1} missing required field: instruction")
+            if "action" not in step:
+                raise ValueError(f"Step {i+1} missing required field: action")
+            
+            # Ensure step has ingredients and equipment lists
+            if "ingredients" not in step:
+                step["ingredients"] = []
+            if "equipment" not in step:
+                step["equipment"] = []

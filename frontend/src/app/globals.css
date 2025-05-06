@@ -2,18 +2,43 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Core styles only - kitchen background is now handled by KitchenBackground.tsx */
+:root {
+  /* Empty root - all constants now come from constants.ts */
+}
+
+/* No body::after - we're using a dedicated background component */
+
+/* Slideshow transparency fixes - priority override */
+.fixed.inset-0.z-50,
+.fixed.inset-0.z-50 > div,
+.fixed.inset-0.z-50 > div > div,
+.fixed.inset-0.z-50 > div > div > div,
+.fixed.inset-0.z-50 > div > div > div > div {
+  background-color: transparent !important;
+  background-image: none !important;
+  background: none !important;
+  box-shadow: none !important;
+}
+
+/* Kitchen background styling handled completely by KitchenBackground.tsx */
+
+/* Kitchen background styles moved to layout.tsx */
+
 body {
-  @apply bg-gray-50 text-gray-900;
+  @apply text-gray-900;
 }
 
 /* Custom scrollbar styles */
 .custom-scrollbar {
   scrollbar-width: thin;
   scrollbar-color: #CBD5E0 transparent;
+  -webkit-overflow-scrolling: touch; /* Smooth scrolling on iOS */
 }
 
 .custom-scrollbar::-webkit-scrollbar {
   width: 6px;
+  height: 6px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-track {
@@ -29,6 +54,19 @@ body {
   background-color: #A0AEC0;
 }
 
+/* Special handling for mobile devices */
+@media (max-width: 768px) {
+  .custom-scrollbar {
+    -webkit-overflow-scrolling: touch;
+    overflow-y: auto;
+    /* Slightly larger scrollbar for touch devices */
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 4px;
+  }
+}
+
 @layer components {
   .btn {
     @apply px-4 py-2 rounded-md transition-all duration-200 font-medium;
@@ -41,4 +79,63 @@ body {
   .input {
     @apply w-full p-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500;
   }
+}
+
+/* Hide navigation when slideshow is open */
+body.slideshow-open nav,
+body.slideshow-open .animated-recipe-title,
+body.slideshow-open form {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* Hide main content when slideshow is open */
+body.slideshow-open main > .container > *:not(.slideshow-active) {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* Fix slideshow interaction issues */
+.slideshow-active,
+.slideshow-active button,
+.slideshow-active [class*="cursor-"],
+.slideshow-active [role="button"],
+.slideshow-active .clickable {
+  pointer-events: auto !important;
+  z-index: 9999 !important;
+}
+
+/* Ensure background doesn't interfere */
+.slideshow-active [style*="background"] {
+  pointer-events: none;
+}
+
+/* Override for specific interactive elements */
+.slideshow-active button,
+.slideshow-active [role="button"],
+.slideshow-active .clickable {
+  z-index: 10001 !important;
+  position: relative !important;
+}
+
+/* Fix cursors for draggable items */
+.cursor-grab {
+  cursor: grab !important;
+}
+
+.cursor-grabbing {
+  cursor: grabbing !important;
+}
+
+/* Physics Counter Animations */
+@keyframes jiggleRightAnim {
+  0% { transform: translate(-50%, -50%); }
+  65% { transform: translate(-50%, -50%) translateX(30px) rotate(4deg); }
+  85% { transform: translate(-50%, -50%) translateX(25px) rotate(2deg); }
+  100% { transform: translate(-50%, -50%) translateX(28px) rotate(3deg); }
+}
+
+@keyframes swipeLeftAnim {
+  0% { transform: translate(-50%, -50%) translateX(28px) rotate(3deg); }
+  100% { transform: translate(-50%, -50%) translateX(-1200px) rotate(-10deg); }
 }

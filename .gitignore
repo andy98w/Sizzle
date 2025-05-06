@@ -49,9 +49,7 @@ yarn-error.log*
 coverage/
 
 # Static files and media
-static/animations/generated/
-static/images/steps/
-static/images/tests/
+static/
 
 # Local database
 *.sqlite

@@ -1,76 +1,49 @@
 import os
-import re
 from typing import Dict, List, Optional, Any
 import json
-import sys
-import platform
+import time
 
-venv_site_packages = os.path.join(os.path.dirname(__file__), 'venv/lib/python3.13/site-packages')
-if os.path.exists(venv_site_packages):
-    sys.path.insert(0, venv_site_packages)
-
-try:
-    from dotenv import load_dotenv
-except ImportError:
-    def load_dotenv():
-        print("Warning: python-dotenv not available, environment variables may not be loaded correctly")
-
-python_version = platform.python_version_tuple()
-major, minor = python_version[0], python_version[1]
-site_packages_path = os.path.join(os.path.dirname(__file__), f'venv/lib/python{major}.{minor}/site-packages')
-
-if os.path.exists(site_packages_path):
-    sys.path.insert(0, site_packages_path)
-else:
-    alternate_paths = [
-        os.path.join(os.path.dirname(__file__), 'venv/lib/python3.13/site-packages'),
-        os.path.join(os.path.dirname(__file__), 'venv/lib/python3.9/site-packages'),
-        os.path.join(os.path.dirname(__file__), 'venv/lib/site-packages'),
-    ]
-    for path in alternate_paths:
-        if os.path.exists(path):
-            sys.path.insert(0, path)
-            break
+import setup_env
+from utils import logger, log_exception
 
 try:
     from supabase import create_client, Client
 except ImportError:
-    print("Error: Could not import 'supabase'. Make sure it's installed with 'pip install supabase'")
+    logger.warning("Could not import 'supabase'. Make sure it's installed with 'pip install supabase'")
     create_client = lambda a, b: None
     class Client: pass
 
+from dotenv import load_dotenv
 load_dotenv()
 
 class SupabaseManager:
     """Class to handle interactions with Supabase database"""
     
     def __init__(self):
+        """Initialize the Supabase database manager"""
         try:
             supabase_url = os.getenv("SUPABASE_URL")
             supabase_key = os.getenv("SUPABASE_KEY")
             
             if not supabase_url or not supabase_key:
-                print("Warning: Supabase credentials not found in environment variables.")
+                logger.warning("Supabase credentials not found in environment variables")
                 self.client = None
             else:
                 if create_client.__name__ == "<lambda>":
-                    print("Warning: Using fallback Supabase client due to missing package.")
+                    logger.warning("Using fallback Supabase client due to missing package")
                     self.client = None
                 else:
                     self.client = create_client(supabase_url, supabase_key)
-
-                    # List available tables to debug
+                    logger.info("Supabase client initialized successfully")
+                    
+                    # Verify connection by checking a table
                     try:
                         test_query = self.client.table('generated_images').select('count').limit(1).execute()
-                        if hasattr(test_query, 'data'):
-                            pass # Database connection check complete
                     except Exception as table_err:
-                        pass # Continue despite table check error
+                        logger.debug(f"Table check produced error (may be normal): {str(table_err)}")
                         
         except Exception as e:
-            print(f"Error initializing Supabase client: {e}")
-            import traceback
-            traceback.print_exc()
+            log_exception(e, "Error initializing Supabase client")
             self.client = None
     
     def is_connected(self) -> bool:
@@ -87,10 +60,9 @@ class SupabaseManager:
             self.client.table('recipes').select('id').limit(1).execute()
             return True
         except Exception as e:
-            
+            log_exception(e, "Failed to test database connection")
             return False
     
-    # Recipe Management Methods
     
     def save_recipe(self, recipe_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Save a recipe to the database"""
@@ -120,7 +92,7 @@ class SupabaseManager:
             return None
                 
         except Exception as e:
-            
+            log_exception(e, "Error saving recipe")
             return None
     
     def get_recipe(self, recipe_id: int) -> Optional[Dict[str, Any]]:
@@ -136,7 +108,7 @@ class SupabaseManager:
             return None
                 
         except Exception as e:
-            
+            log_exception(e, f"Error fetching recipe with ID {recipe_id}")
             return None
     
     def get_recipe_by_title(self, title: str) -> Optional[Dict[str, Any]]:
@@ -152,7 +124,7 @@ class SupabaseManager:
             return None
                 
         except Exception as e:
-            
+            log_exception(e, f"Error fetching recipe with title '{title}'")
             return None
     
     def search_recipes(self, query: str) -> List[Dict[str, Any]]:
@@ -170,8 +142,8 @@ class SupabaseManager:
                 title_result = self.client.table('recipes').select('*').textSearch('title', query).execute()
                 if title_result.data:
                     all_recipes.extend(title_result.data)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Title search error (non-critical): {str(e)}")
                 
             # Then try description search
             try:
@@ -181,8 +153,8 @@ class SupabaseManager:
                     for recipe in desc_result.data:
                         if not any(r.get('id') == recipe.get('id') for r in all_recipes):
                             all_recipes.append(recipe)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Description search error (non-critical): {str(e)}")
                 
             # Also try matching any title words for better flexibility
             try:
@@ -193,8 +165,8 @@ class SupabaseManager:
                             for recipe in title_term_result.data:
                                 if not any(r.get('id') == recipe.get('id') for r in all_recipes):
                                     all_recipes.append(recipe)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Term search error (non-critical): {str(e)}")
                 
             # If still no results or fewer than expected, try ingredient-based search
             if len(all_recipes) < 10:
@@ -219,8 +191,8 @@ class SupabaseManager:
                                         if any(term in ingredient_name for term in query_terms):
                                             all_recipes.append(recipe)
                                             break
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Ingredient search error (non-critical): {str(e)}")
                     
             # Sort results by relevance (exact title match first, then description match, then ingredients)
             def relevance_score(recipe):
@@ -270,7 +242,7 @@ class SupabaseManager:
             return all_recipes[:10]
                 
         except Exception as e:
-            print(f"Error in search_recipes: {e}")
+            log_exception(e, "Error in search_recipes")
             return []
     
     def list_recent_recipes(self, limit: int = 10) -> List[Dict[str, Any]]:
@@ -286,10 +258,9 @@ class SupabaseManager:
             return []
                 
         except Exception as e:
-            
+            log_exception(e, "Error listing recent recipes")
             return []
     
-    # Image Storage Methods
     
     def save_image_metadata(self, 
                            image_type: str, 
@@ -301,14 +272,11 @@ class SupabaseManager:
             return None
             
         try:
-            # Print detailed information about what we're saving
-            print("\n--- SAVING IMAGE METADATA TO SUPABASE ---")
-
-            # Clean the URL by removing any spaces that might cause issues with Oracle Cloud
+            # Clean the URL by removing any spaces that might cause issues with cloud storage
             cleaned_url = url.replace(" ", "") if url else ""
             
             image_data = {
-                'type': image_type,  # e.g., 'ingredient', 'step', 'equipment', 'action'
+                'type': image_type,
                 'name': name,
                 'prompt': prompt,
                 'url': cleaned_url
@@ -317,17 +285,13 @@ class SupabaseManager:
             result = self.client.table('generated_images').insert(image_data).execute()
             
             if result.data and len(result.data) > 0:
-                
                 return result.data[0]
             else:
-                
+                logger.warning(f"Failed to save image metadata for {image_type}/{name}")
                 return None
                 
         except Exception as e:
-            
-            # Print the exception traceback for more detail
-            import traceback
-            traceback.print_exc()
+            log_exception(e, f"Error saving image metadata for {image_type}/{name}")
             return None
     
     def get_image_by_name(self, image_type: str, name: str) -> Optional[Dict[str, Any]]:
@@ -344,7 +308,7 @@ class SupabaseManager:
                 return None
                 
         except Exception as e:
-            
+            log_exception(e, f"Error fetching image metadata for {image_type}/{name}")
             return None
             
     def save_ingredient(self, name: str, image_url: str, prompt: str) -> Optional[Dict[str, Any]]:
@@ -359,34 +323,26 @@ class SupabaseManager:
 
                 # Create update data with all required fields
                 update_data = {
-                    'prompt': prompt,  # Make sure prompt is included
-                    'type': 'ingredient',  # Ensure type is correctly set
-                    'name': name,  # Ensure name is correctly set
+                    'prompt': prompt,
+                    'type': 'ingredient',
+                    'name': name,
                 }
                 
                 # Handle different URL formats
                 if image_url.startswith('http'):
-                    # For OCI cloud storage or other external URLs
-                    # Clean the URL by removing spaces that can break Oracle Cloud URLs
-                    cleaned_url = image_url.replace(" ", "")
-                    if cleaned_url != image_url:
-                        pass # Space removal complete
-                    update_data['url'] = cleaned_url
+                    # Clean the URL by removing spaces
+                    update_data['url'] = image_url.replace(" ", "")
                 else:
                     # For local storage paths
                     update_data['url'] = f"http://localhost:8000{image_url}"
 
-                # Try a different approach with RPC
-
+                # Try a different approach with direct API calls
                 try:
                     # First try direct update
                     result = self.client.table('generated_images').update(update_data).eq('id', existing['id']).execute()
 
-                    if hasattr(result, 'data'):
-                        pass # Result has data attribute
-
+                    # Verify result has data attribute
                     if result.data and len(result.data) > 0:
-
                         return result.data[0]
                     
                     # If standard update didn't work, try direct REST API call
@@ -398,14 +354,14 @@ class SupabaseManager:
                     supabase_key = os.getenv("SUPABASE_KEY")
                     
                     if not supabase_url or not supabase_key:
-                        
+                        logger.warning("Missing Supabase credentials, returning existing record")
                         return existing
                     
                     # Prepare request data
                     api_url = f"{supabase_url}/rest/v1/generated_images"
                     
-                    # Properly escape single quotes in the prompt
-                    safe_prompt = prompt.replace("'", "''")
+                    # Escape SQL special characters
+                    prompt = prompt.replace("'", "''")
                     
                     headers = {
                         "apikey": supabase_key,
@@ -418,8 +374,8 @@ class SupabaseManager:
                     update_payload = {
                         "url": image_url,
                         "prompt": prompt,
-                        "type": "ingredient",  # Ensure the type is set correctly
-                        "name": name  # Ensure the name is set correctly
+                        "type": "ingredient",
+                        "name": name
                     }
                     
                     # Use PATCH to update the record
@@ -435,16 +391,11 @@ class SupabaseManager:
 
                         if response.status_code in (200, 201, 204):
 
-                            # Try a direct POST request with upsert instead of PUT
-
-                            # For upsert we use the base URL without filter
+                            # Try a direct POST request with upsert
+                            # Prepare upsert request
                             post_url = api_url
-                            
-                            # Add the Prefer header for upsert behavior
                             upsert_headers = headers.copy()
                             upsert_headers["Prefer"] = "resolution=merge-duplicates,return=representation"
-                            
-                            # For upsert we must include the primary key in the payload
                             upsert_data = json.loads(patch_data)
                             upsert_data["id"] = existing["id"]
                             
@@ -465,10 +416,11 @@ class SupabaseManager:
                                     post_data = post_response.json()
                                     if post_data and len(post_data) > 0:
                                         return post_data[0]
-                            except Exception as post_err:
-                                pass # Silently handle JSON parsing errors
+                            except Exception as err:
+                                logger.debug(f"POST upsert JSON parsing error: {str(err)}")
+                                pass
 
-                            # If POST didn't work, fetch using direct REST API
+                            # If POST didn't work, try direct GET
                             
                             get_url = f"{api_url}?id=eq.{existing['id']}&select=*"
                             get_headers = {
@@ -483,56 +435,47 @@ class SupabaseManager:
                                     fetched_data = get_response.json()
                                     if fetched_data and len(fetched_data) > 0:
 
-                                        # If url is empty but we have the image_url,
-                                        # create a client-side updated record
+                                        # If url is empty, use provided URL
                                         if not fetched_data[0].get('url'):
-                                            
                                             updated_record = dict(fetched_data[0])
                                             updated_record['url'] = image_url
                                             return updated_record
                                         
                                         return fetched_data[0]
-                                except Exception as json_err:
-                                    pass # Silently handle JSON errors
+                                except Exception as err:
+                                    logger.debug(f"GET response JSON parsing error: {str(err)}")
+                                    pass
 
-                            # Fall back to returning a client-side updated record
-                            
+                            # Fall back to client-side updated record
                             updated_record = dict(existing)
                             updated_record['url'] = image_url
                             updated_record['prompt'] = prompt
                             return updated_record
-                    except Exception as rest_err:
-                        pass # Silently handle REST API errors
+                    except Exception as err:
+                        logger.debug(f"REST API error: {str(err)}")
+                        pass
                         
-                    # Fallback: Now fetch the record even if update failed
+                    # Fallback: Fetch the record even if update failed
                     result = self.client.table('generated_images').select('*').eq('id', existing['id']).execute()
                     
                     if result.data and len(result.data) > 0:
                         updated_record = result.data[0]
-                        
                         return updated_record
                         
                 except Exception as update_err:
-                    
-                    import traceback
-                    traceback.print_exc()
+                    log_exception(update_err, f"Error updating ingredient {name}")
                 return existing
                 
             # For new ingredients
-
-            # Handle different URL formats for image metadata
             url = image_url
             
-            # If it's a local path, prepend the server URL if needed
+            # If it's a local path, prepend the server URL
             if not image_url.startswith('http'):
-                
                 url = f"http://localhost:8000{image_url}"
             else:
-                
-                # Clean the URL by removing spaces that can break Oracle Cloud URLs
+                # Clean the URL by removing spaces
                 cleaned_url = image_url.replace(" ", "")
                 if cleaned_url != image_url:
-                    
                     url = cleaned_url
 
             # Save the image metadata
@@ -543,7 +486,7 @@ class SupabaseManager:
                 url=url
             )
         except Exception as e:
-            
+            log_exception(e, f"Error saving ingredient {name}")
             return None
             
     def list_ingredients(self, limit: int = 1000, offset: int = 0) -> List[Dict[str, Any]]:
@@ -564,7 +507,7 @@ class SupabaseManager:
             return []
                 
         except Exception as e:
-            print(f"Error listing ingredients: {e}")
+            log_exception(e, "Error listing ingredients")
             return []
             
     def count_ingredients(self) -> int:
@@ -582,22 +525,19 @@ class SupabaseManager:
             # Extract count from result
             if result.data and len(result.data) > 0:
                 if 'count' in result.data[0]:
-                    count = result.data[0]['count']
-                    
-                    return count
+                    return result.data[0]['count']
                 
             # Fallback: count manually
-            
             count_result = self.client.table('generated_images')\
                 .select('id')\
                 .eq('type', 'ingredient')\
                 .execute()
             
             count = len(count_result.data) if count_result.data else 0
-            
             return count
                 
         except Exception as e:
+            log_exception(e, "Error counting ingredients")
             return 0
             
     def cleanup_placeholder_ingredients(self) -> int:
@@ -634,21 +574,15 @@ class SupabaseManager:
                             .execute()
                         deleted_count += len(batch)
                 
+                logger.info(f"Deleted {deleted_count} placeholder ingredients")
                 return deleted_count
             
             return 0
                 
         except Exception as e:
-            
+            log_exception(e, "Error cleaning up placeholder ingredients")
             return 0
 
 # Singleton instance
+# Access this instance using 'from db_manager import db'
 db = SupabaseManager()
-
-if __name__ == "__main__":
-    # Test the Supabase connection
-    if db.is_connected():
-        test_result = db.test_connection()
-        
-    else:
-        print("Supabase client not initialized. Check your environment variables.")

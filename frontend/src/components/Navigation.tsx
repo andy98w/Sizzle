@@ -4,7 +4,7 @@ import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { FaUtensils, FaHome, FaBook, FaSearch, FaCarrot } from 'react-icons/fa';
+import { FaUtensils, FaBook, FaSearch, FaCarrot } from 'react-icons/fa';
 
 interface NavItem {
   name: string;
@@ -35,16 +35,11 @@ const Navigation: React.FC = () => {
       name: 'Sample Recipe',
       href: '/recipe',
       icon: <FaUtensils />
-    },
-    {
-      name: 'API Test',
-      href: '/test',
-      icon: <FaUtensils />
     }
   ];
   
   return (
-    <nav className="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-10">
+    <nav className="bg-white/90 backdrop-blur-sm shadow-md border-b border-gray-200 sticky top-0 z-[10000]">
       <div className="container mx-auto px-4 py-3">
         <div className="flex items-center justify-between">
           <Link href="/animated-recipe" className="flex items-center space-x-3">

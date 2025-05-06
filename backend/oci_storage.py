@@ -1,326 +1,186 @@
-import base64
-import os
-import requests
-from typing import Optional
-import mimetypes
-from pathlib import Path
+"""
+Oracle Cloud Infrastructure (OCI) Object Storage integration module.
 
+This module provides functionality for interacting with OCI Object Storage,
+including file uploads, PAR generation, and object listing.
+"""
+
+import os
+import io
+import datetime
+import mimetypes
+from typing import List, Dict, Optional, Any, BinaryIO, Tuple
+from pathlib import Path
+import requests
+import json
+
+# Set up mime types
+mimetypes.init()
+
+# Set a flag indicating if OCI is available
+OCI_AVAILABLE = False
+
+# Try to import OCI SDK
 try:
     import oci
+    from oci.config import from_file
     OCI_AVAILABLE = True
 except ImportError:
     OCI_AVAILABLE = False
-    print("Warning: OCI module not available. Cloud storage functionality will be limited.")
+
+# Local imports
+from config import (
+    OCI_BUCKET_NAME, OCI_NAMESPACE, STATIC_DIR
+)
+from utils import logger, log_exception, format_oci_url
+
+# Add PAR URL from config
+from config import OCI_PAR_URL
 
 class OCIObjectStorage:
-    """Class to handle Oracle Cloud Infrastructure Object Storage operations using PAR URLs"""
+    """
+    Class to handle Oracle Cloud Infrastructure Object Storage operations.
     
-    def __init__(self, par_url: str):
-        """Initialize with a Pre-Authenticated Request URL for the bucket"""
-        self.par_url = par_url.rstrip('/')
-        self.enabled = OCI_AVAILABLE and par_url
+    This class provides functionality for uploading objects to OCI buckets,
+    generating pre-authenticated requests (PARs), and listing objects.
+    """
+    
+    def __init__(self):
+        """Initialize the OCIObjectStorage instance."""
+        self.client = None
+        self.namespace = OCI_NAMESPACE
+        self.bucket_name = OCI_BUCKET_NAME
+        self.configured = False
         
-        # Validate and fix PAR URL format if needed
-        if self.enabled:
-            # Extract the base URL and PAR path separately for correct URL construction
-            # PAR URLs should contain '/p/' as per Oracle's format
-            pass
-        else:
-            print("OCI Object Storage is disabled. Images will be stored locally only.")
+        # Using PAR directly, so we don't need the OCI SDK for uploads
+        self.par_configured = bool(OCI_PAR_URL)
+        
+        # Try to initialize if OCI is available but don't require it
+        if OCI_AVAILABLE:
+            self._try_initialize()
     
-    def upload_image(self, image_path: str, object_name: str) -> Optional[str]:
-        """Upload an image file to OCI Object Storage using PAR URL"""
-        # If OCI is not available, return None to indicate fallback to local storage
-        if not self.enabled:
-            pass
-            return None
+    def _try_initialize(self) -> bool:
+        """
+        Try to initialize the OCI Object Storage client.
+        
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Since we're using PAR, we don't need full OCI initialization
+            self.configured = self.par_configured
+            
+            # Log configuration status
+            if self.configured:
+                logger.info(f"OCI Object Storage PAR configured for bucket: {self.bucket_name}")
+            else:
+                logger.warning("OCI Object Storage PAR not configured")
+                
+            return self.configured
+        except Exception as e:
+            log_exception(e, "Failed to initialize OCI Object Storage")
+            self.configured = False
+            return False
+    
+    def upload_file(self, file_path: str, object_name: Optional[str] = None) -> Tuple[bool, str]:
+        """
+        Upload a file to OCI Object Storage using PAR URL.
+        
+        Args:
+            file_path: Path to the file to upload
+            object_name: Name to use for the object in storage (defaults to file basename)
+            
+        Returns:
+            Tuple of (success, object_name or error message)
+        """
+        if not self.par_configured:
+            return False, "OCI PAR not configured"
             
         try:
-            # Check if the file exists
-            if not os.path.exists(image_path):
-                return None
+            # Prepare the file and object name
+            file_path = Path(file_path)
+            if not file_path.exists():
+                return False, f"File not found: {file_path}"
                 
-            # Get file content and MIME type
-            with open(image_path, 'rb') as file:
-                file_content = file.read()
-            
-            # Determine content type based on file extension
-            content_type, _ = mimetypes.guess_type(image_path)
+            # Use the provided object name or default to the file basename
+            if not object_name:
+                object_name = file_path.name
+                
+            # Get content type
+            content_type, _ = mimetypes.guess_type(str(file_path))
             if not content_type:
                 content_type = 'application/octet-stream'
-            
-            # Construct the object URL (PAR URL + object name)
-            # Ensure proper formatting for Oracle Cloud PAR URLs
-            if '/p/' in self.par_url:
-                # The PAR URL already contains the /p/ path, just append the object name
-                object_url = f"{self.par_url}/{object_name}"
-            else:
-                # Try to reconstruct the proper PAR URL format
-                # Parse the URL to extract components
-                from urllib.parse import urlparse
-                parsed_url = urlparse(self.par_url)
                 
-                # Oracle PAR URLs follow pattern: https://objectstorage.{region}.oraclecloud.com/p/{token}/n/{namespace}/b/{bucket}/o/{object}
-                # We need to ensure the object name is correctly added to this path
-                if 'objectstorage' in parsed_url.netloc:
-                    # This is an Oracle URL, but missing proper PAR format
-                    # Assuming path contains namespace, bucket info without /p/ token
-                    path_parts = parsed_url.path.strip('/').split('/')
-                    if len(path_parts) >= 4 and path_parts[0] == 'n' and path_parts[2] == 'b':
-                        # URL follows pattern /n/{namespace}/b/{bucket}/...
-                        namespace = path_parts[1]
-                        bucket = path_parts[3]
-                        # Construct URL with placeholder token (this is a best-effort fix)
-                        object_url = f"{parsed_url.scheme}://{parsed_url.netloc}/p/token/n/{namespace}/b/{bucket}/o/{object_name}"
-                    else:
-                        # Can't parse correctly, use as-is
-                        object_url = f"{self.par_url}/{object_name}"
+            # Upload using the PAR URL
+            with open(file_path, 'rb') as f:
+                par_upload_url = f"{OCI_PAR_URL.rstrip('/')}/{object_name}"
+                
+                # Make the PUT request
+                response = requests.put(
+                    par_upload_url,
+                    data=f,
+                    headers={
+                        'Content-Type': content_type
+                    }
+                )
+                
+                if response.status_code in (200, 201):
+                    logger.info(f"File uploaded successfully: {object_name}")
+                    return True, object_name
                 else:
-                    # Not an Oracle URL or can't determine format, use as-is
-                    object_url = f"{self.par_url}/{object_name}"
-            
-            # Set up headers
-            headers = {
-                'Content-Type': content_type
-            }
-            
-            # Upload the file
-            response = requests.put(object_url, data=file_content, headers=headers)
-            
-            if response.status_code in (200, 201):
-                
-                # Create a formatted direct access URL that will work with browser requests
-                # The URL needs to be in the correct format for Oracle Cloud PAR URIs
-                # Format: https://objectstorage.{region}.oraclecloud.com/p/{token}/n/{namespace}/b/{bucket}/o/{object}
-                
-                if '/p/' in object_url:
-                    # URL is already properly formatted
-                    direct_url = object_url
-                else:
-                    # Try to ensure the URL has the correct Oracle format
-                    from urllib.parse import urlparse
-                    parsed_url = urlparse(object_url)
+                    error_msg = f"Failed to upload file. Status: {response.status_code}, Response: {response.text}"
+                    logger.error(error_msg)
+                    return False, error_msg
                     
-                    if 'objectstorage' in parsed_url.netloc:
-                        # This is an Oracle URL, check if we need to reformat
-                        path = parsed_url.path.lstrip('/')
-                        
-                        # Check if path starts with object name directly (basic case)
-                        if path.startswith(object_name):
-                            # Build a proper PAR URL - best effort based on error message
-                            # Check if we have enough info to reconstruct a proper URL
-                            if 'n/' in self.par_url and 'b/' in self.par_url:
-                                # Extract namespace and bucket from base PAR URL
-                                par_path = urlparse(self.par_url).path
-                                # Try to find namespace and bucket in the path
-                                n_index = par_path.find('/n/')
-                                b_index = par_path.find('/b/')
-                                
-                                if n_index >= 0 and b_index >= 0:
-                                    namespace = par_path[n_index+3:b_index].strip('/')
-                                    # Find the bucket name (everything after /b/ until next / or end)
-                                    bucket_path = par_path[b_index+3:]
-                                    bucket = bucket_path.split('/')[0]
-                                    
-                                    # Now construct a proper URL
-                                    direct_url = f"{parsed_url.scheme}://{parsed_url.netloc}/p/auto-generated/n/{namespace}/b/{bucket}/o/{object_name}"
-                                else:
-                                    # Can't extract properly, use as-is
-                                    direct_url = object_url
-                            else:
-                                # Can't determine namespace/bucket, use as-is
-                                direct_url = object_url
-                        else:
-                            # Path doesn't start with object name, assume it's already properly formatted
-                            direct_url = object_url
-                    else:
-                        # Not Oracle URL, use as-is
-                        direct_url = object_url
-
-                return direct_url
-            else:
-                return None
-                
-        except Exception:
-            return None
+        except Exception as e:
+            error_msg = f"Error uploading file: {str(e)}"
+            log_exception(e, error_msg)
+            return False, error_msg
     
-    def upload_base64_image(self, base64_data: str, object_name: str) -> Optional[str]:
-        """Upload a base64-encoded image directly to OCI Object Storage"""
-        # If OCI is not available, return None to indicate fallback to local storage
-        if not self.enabled:
-            return None
+    def get_object_url(self, object_name: str) -> str:
+        """
+        Get a URL for an object using the PAR.
+        
+        Args:
+            object_name: The name of the object
             
-        try:
-            # Remove data URL prefix if present
-            if base64_data.startswith('data:image'):
-                # Extract the base64 part after the comma
-                base64_data = base64_data.split(',', 1)[1]
+        Returns:
+            The URL for the object
+        """
+        if not self.par_configured:
+            return ""
             
-            # Decode the base64 data
-            image_data = base64.b64decode(base64_data)
+        # Clean up the object name
+        object_name = object_name.lstrip('/')
+        
+        # Construct the URL using the PAR
+        return f"{OCI_PAR_URL.rstrip('/')}/{object_name}"
+    
+    def object_exists(self, object_name: str) -> bool:
+        """
+        Check if an object exists in the bucket.
+        
+        Args:
+            object_name: The name of the object to check
             
-            # Determine content type based on object name
-            content_type, _ = mimetypes.guess_type(object_name)
-            if not content_type:
-                content_type = 'image/png'  # Default to PNG
-            
-            # Construct the object URL (PAR URL + object name)
-            # Ensure proper formatting for Oracle Cloud PAR URLs
-            if '/p/' in self.par_url:
-                # The PAR URL already contains the /p/ path, just append the object name
-                object_url = f"{self.par_url}/{object_name}"
-            else:
-                # Try to reconstruct the proper PAR URL format
-                # Parse the URL to extract components
-                from urllib.parse import urlparse
-                parsed_url = urlparse(self.par_url)
-                
-                # Oracle PAR URLs follow pattern: https://objectstorage.{region}.oraclecloud.com/p/{token}/n/{namespace}/b/{bucket}/o/{object}
-                # We need to ensure the object name is correctly added to this path
-                if 'objectstorage' in parsed_url.netloc:
-                    # This is an Oracle URL, but missing proper PAR format
-                    # Assuming path contains namespace, bucket info without /p/ token
-                    path_parts = parsed_url.path.strip('/').split('/')
-                    if len(path_parts) >= 4 and path_parts[0] == 'n' and path_parts[2] == 'b':
-                        # URL follows pattern /n/{namespace}/b/{bucket}/...
-                        namespace = path_parts[1]
-                        bucket = path_parts[3]
-                        # Construct URL with placeholder token (this is a best-effort fix)
-                        object_url = f"{parsed_url.scheme}://{parsed_url.netloc}/p/token/n/{namespace}/b/{bucket}/o/{object_name}"
-                    else:
-                        # Can't parse correctly, use as-is
-                        object_url = f"{self.par_url}/{object_name}"
-                else:
-                    # Not an Oracle URL or can't determine format, use as-is
-                    object_url = f"{self.par_url}/{object_name}"
-            
-            # Set up headers
-            headers = {
-                'Content-Type': content_type
-            }
-            
-            # Upload the file
-            response = requests.put(object_url, data=image_data, headers=headers)
-            
-            if response.status_code in (200, 201):
-                
-                # Create a formatted direct access URL that will work with browser requests
-                # The URL needs to be in the correct format for Oracle Cloud PAR URIs
-                # Format: https://objectstorage.{region}.oraclecloud.com/p/{token}/n/{namespace}/b/{bucket}/o/{object}
-                
-                if '/p/' in object_url:
-                    # URL is already properly formatted
-                    direct_url = object_url
-                else:
-                    # Try to ensure the URL has the correct Oracle format
-                    from urllib.parse import urlparse
-                    parsed_url = urlparse(object_url)
-                    
-                    if 'objectstorage' in parsed_url.netloc:
-                        # This is an Oracle URL, check if we need to reformat
-                        path = parsed_url.path.lstrip('/')
-                        
-                        # Check if path starts with object name directly (basic case)
-                        if path.startswith(object_name):
-                            # Build a proper PAR URL - best effort based on error message
-                            # Check if we have enough info to reconstruct a proper URL
-                            if 'n/' in self.par_url and 'b/' in self.par_url:
-                                # Extract namespace and bucket from base PAR URL
-                                par_path = urlparse(self.par_url).path
-                                # Try to find namespace and bucket in the path
-                                n_index = par_path.find('/n/')
-                                b_index = par_path.find('/b/')
-                                
-                                if n_index >= 0 and b_index >= 0:
-                                    namespace = par_path[n_index+3:b_index].strip('/')
-                                    # Find the bucket name (everything after /b/ until next / or end)
-                                    bucket_path = par_path[b_index+3:]
-                                    bucket = bucket_path.split('/')[0]
-                                    
-                                    # Now construct a proper URL
-                                    direct_url = f"{parsed_url.scheme}://{parsed_url.netloc}/p/auto-generated/n/{namespace}/b/{bucket}/o/{object_name}"
-                                else:
-                                    # Can't extract properly, use as-is
-                                    direct_url = object_url
-                            else:
-                                # Can't determine namespace/bucket, use as-is
-                                direct_url = object_url
-                        else:
-                            # Path doesn't start with object name, assume it's already properly formatted
-                            direct_url = object_url
-                    else:
-                        # Not Oracle URL, use as-is
-                        direct_url = object_url
-
-                return direct_url
-            else:
-                return None
-                
-        except Exception:
-            return None
-            
-    def delete_object(self, object_name: str) -> bool:
-        """Delete an object from OCI Object Storage"""
-        # If OCI is not available, return False
-        if not self.enabled:
+        Returns:
+            True if the object exists, False otherwise
+        """
+        if not self.par_configured:
             return False
             
         try:
-            # Construct the object URL (PAR URL + object name)
-            # Ensure proper formatting for Oracle Cloud PAR URLs
-            if '/p/' in self.par_url:
-                # The PAR URL already contains the /p/ path, just append the object name
-                object_url = f"{self.par_url}/{object_name}"
-            else:
-                # Try to reconstruct the proper PAR URL format
-                # Parse the URL to extract components
-                from urllib.parse import urlparse
-                parsed_url = urlparse(self.par_url)
-                
-                # Oracle PAR URLs follow pattern: https://objectstorage.{region}.oraclecloud.com/p/{token}/n/{namespace}/b/{bucket}/o/{object}
-                # We need to ensure the object name is correctly added to this path
-                if 'objectstorage' in parsed_url.netloc:
-                    # This is an Oracle URL, but missing proper PAR format
-                    # Assuming path contains namespace, bucket info without /p/ token
-                    path_parts = parsed_url.path.strip('/').split('/')
-                    if len(path_parts) >= 4 and path_parts[0] == 'n' and path_parts[2] == 'b':
-                        # URL follows pattern /n/{namespace}/b/{bucket}/...
-                        namespace = path_parts[1]
-                        bucket = path_parts[3]
-                        # Construct URL with placeholder token (this is a best-effort fix)
-                        object_url = f"{parsed_url.scheme}://{parsed_url.netloc}/p/token/n/{namespace}/b/{bucket}/o/{object_name}"
-                    else:
-                        # Can't parse correctly, use as-is
-                        object_url = f"{self.par_url}/{object_name}"
-                else:
-                    # Not an Oracle URL or can't determine format, use as-is
-                    object_url = f"{self.par_url}/{object_name}"
+            # Clean up the object name
+            object_name = object_name.lstrip('/')
             
-            # Send DELETE request
-            response = requests.delete(object_url)
+            # Construct the URL using the PAR
+            url = f"{OCI_PAR_URL.rstrip('/')}/{object_name}"
             
-            if response.status_code == 204:
-                return True
-            else:
-                return False
-                
-        except Exception:
+            # Make a HEAD request to check if the object exists
+            response = requests.head(url)
+            
+            # 200 means the object exists
+            return response.status_code == 200
+        except Exception as e:
+            logger.warning(f"Error checking if object exists: {str(e)}")
             return False
-
-if __name__ == "__main__":
-    import os
-    from dotenv import load_dotenv
-    
-    load_dotenv()
-    par_url = os.getenv("OCI_PAR_URL")
-    
-    if not par_url:
-        print("OCI_PAR_URL environment variable not set")
-        exit(1)
-    
-    storage = OCIObjectStorage(par_url)
-    
-    test_image_path = "static/images/tests/test_image.png"
-    if os.path.exists(test_image_path):
-        result = storage.upload_image(test_image_path, "test/test_upload.png")
-        print(f"Upload result: {result}")

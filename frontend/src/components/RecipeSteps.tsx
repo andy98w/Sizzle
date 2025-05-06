@@ -1,6 +1,7 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 import { RecipeAnimation, IngredientVisual, EquipmentVisual, CookingAction } from './AnimationLibrary';
+import { API_URL } from '@/config';
 
 interface Ingredient {
   name: string;
@@ -52,7 +53,7 @@ const RecipeSteps: React.FC<RecipeStepsProps> = ({ steps }) => {
                 {step.step_image ? (
                   <div className="flex flex-col items-center">
                     <img 
-                      src={`http://localhost:8000${step.step_image}`} 
+                      src={`${API_URL}${step.step_image}`} 
                       alt={`Step ${step.id}: ${step.instruction}`}
                       className="w-full max-w-xs mx-auto rounded-lg shadow-md mb-4"
                     />
@@ -61,7 +62,7 @@ const RecipeSteps: React.FC<RecipeStepsProps> = ({ steps }) => {
                 ) : step.action_image ? (
                   <div className="flex flex-col items-center">
                     <img 
-                      src={`http://localhost:8000${step.action_image}`} 
+                      src={`${API_URL}${step.action_image}`} 
                       alt={`${step.action} action`}
                       className="w-full max-w-xs mx-auto rounded-lg shadow-md mb-4"
                     />

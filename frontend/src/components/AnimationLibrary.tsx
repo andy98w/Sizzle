@@ -1,5 +1,85 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
+import axios from 'axios';
+import { API_URL } from '@/config';
+import { Ingredient, Equipment, CookingAction } from '@/types';
+import { getImageUrl, handleImageError } from '@/utils';
+import { ImageWithFallback } from './shared';
+
+// Cache for ingredient image URLs
+const ingredientCache: Record<string, string | null> = {};
+
+// Function to get an ingredient image URL
+export const getIngredientImageUrl = async (ingredientName: string): Promise<string | null> => {
+  // Check cache first to avoid redundant API calls
+  if (ingredientName in ingredientCache) {
+    return ingredientCache[ingredientName];
+  }
+  
+  try {
+    // Try to find the ingredient using the search endpoint
+    const response = await axios.get(`${API_URL}/ingredients?search=${encodeURIComponent(ingredientName)}&limit=5`);
+    
+    // Extract data from the nested structure
+    const responseData = response.data;
+    const data = responseData.data || responseData;
+    
+    if (data && data.ingredients && data.ingredients.length > 0) {
+      const ingredients = data.ingredients;
+      const ingredientNameLower = ingredientName.toLowerCase();
+      
+      // First try to find exact matches
+      let bestMatch = null;
+      
+      // Try to find a match:
+      // 1. Exact match
+      // 2. Ingredient name contains the search term
+      // 3. Search term contains the ingredient name
+      for (const ingredient of ingredients) {
+        if (!ingredient.name) continue;
+        
+        const ingredientLower = ingredient.name.toLowerCase();
+        
+        // Exact match is the best
+        if (ingredientLower === ingredientNameLower) {
+          bestMatch = ingredient;
+          break;
+        }
+        
+        // Ingredient contains the search term
+        if (ingredientLower.includes(ingredientNameLower)) {
+          bestMatch = ingredient;
+          break;
+        }
+        
+        // Search term contains the ingredient
+        if (ingredientNameLower.includes(ingredientLower)) {
+          bestMatch = ingredient;
+          // Don't break here - might find a better match
+        }
+      }
+      
+      // Use the best match if found
+      if (bestMatch && bestMatch.url) {
+        ingredientCache[ingredientName] = bestMatch.url;
+        return bestMatch.url;
+      }
+    }
+    
+    // Return placeholder if no match found
+    const placeholder = "https://objectstorage.ca-toronto-1.oraclecloud.com/p/u4hPf1DL-E9utS-Mh6HXZFsLBXFSzqUlgsrBJsWpjxxkz1Udy_-g3wveTokFV5G6/n/yzep9haqilyk/b/SizzleGeneratedImages/o/ingredients/placeholder.png";
+    ingredientCache[ingredientName] = placeholder;
+    return placeholder;
+    
+  } catch (error) {
+    console.error(`Error fetching ingredient image for ${ingredientName}:`, error);
+    
+    // Return placeholder on error
+    const placeholder = "https://objectstorage.ca-toronto-1.oraclecloud.com/p/u4hPf1DL-E9utS-Mh6HXZFsLBXFSzqUlgsrBJsWpjxxkz1Udy_-g3wveTokFV5G6/n/yzep9haqilyk/b/SizzleGeneratedImages/o/ingredients/placeholder.png";
+    ingredientCache[ingredientName] = placeholder;
+    return placeholder;
+  }
+};
 
 // Types for animations
 export type CookingAction = 'chop' | 'stir' | 'boil' | 'bake' | 'mix' | 'fry' | 'grill' | 'cook_rice';
@@ -175,7 +255,43 @@ export const IngredientVisual: React.FC<{
   quantity?: string;
   image?: string;
 }> = ({ ingredient, quantity, image }) => {
-  // Map common ingredients to emoji icons
+  const [imageUrl, setImageUrl] = useState<string | null>(image || null);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  
+  // Fetch ingredient image on mount
+  useEffect(() => {
+    let isMounted = true;
+    
+    const fetchImage = async () => {
+      // Skip if we already have an image
+      if (image) {
+        setImageUrl(image);
+        setIsLoading(false);
+        return;
+      }
+      
+      try {
+        const url = await getIngredientImageUrl(ingredient);
+        if (isMounted) {
+          setImageUrl(url);
+        }
+      } catch (error) {
+        console.error(`Error fetching image for ${ingredient}:`, error);
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      }
+    };
+    
+    fetchImage();
+    
+    return () => {
+      isMounted = false;
+    };
+  }, [ingredient, image]);
+  
+  // Map common ingredients to emoji icons (as fallback)
   const getIngredientEmoji = (ing: string): string => {
     const mapping: Record<string, string> = {
       'rice': '🍚',
@@ -221,6 +337,56 @@ export const IngredientVisual: React.FC<{
     return '🍴';
   };
   
+  // Render image or fallback
+  const renderImage = () => {
+    if (isLoading) {
+      return (
+        <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center mr-3 animate-pulse">
+        </div>
+      );
+    }
+    
+    if (imageUrl) {
+      // Full URL handling - OCI URL or local URL
+      const fullUrl = imageUrl.startsWith('http') ? 
+                      imageUrl : 
+                      `${API_URL}${imageUrl.startsWith('/') ? '' : '/'}${imageUrl}`;
+      
+      return (
+        <img 
+          src={fullUrl}
+          alt={ingredient}
+          className="w-10 h-10 rounded-full object-cover mr-3"
+          onError={(e) => {
+            // If image fails to load, use placeholder
+            const target = e.target as HTMLImageElement;
+            // Try to use a placeholder from the OCI bucket
+            const placeholder = "https://objectstorage.ca-toronto-1.oraclecloud.com/p/u4hPf1DL-E9utS-Mh6HXZFsLBXFSzqUlgsrBJsWpjxxkz1Udy_-g3wveTokFV5G6/n/yzep9haqilyk/b/SizzleGeneratedImages/o/ingredients/placeholder.png";
+            target.src = placeholder;
+            target.onerror = () => {
+              // If placeholder also fails, hide the image
+              target.style.display = 'none';
+            };
+          }}
+        />
+      );
+    }
+    
+    // Fallback to placeholder image
+    return (
+      <img
+        src="https://objectstorage.ca-toronto-1.oraclecloud.com/p/u4hPf1DL-E9utS-Mh6HXZFsLBXFSzqUlgsrBJsWpjxxkz1Udy_-g3wveTokFV5G6/n/yzep9haqilyk/b/SizzleGeneratedImages/o/ingredients/placeholder.png"
+        alt={ingredient}
+        className="w-10 h-10 rounded-full object-cover mr-3"
+        onError={(e) => {
+          // Hide if placeholder also fails
+          const target = e.target as HTMLImageElement;
+          target.style.display = 'none';
+        }}
+      />
+    );
+  };
+  
   return (
     <motion.div 
       className="flex items-center bg-white p-3 rounded-lg shadow-sm mb-2"
@@ -228,29 +394,7 @@ export const IngredientVisual: React.FC<{
       animate={{ opacity: 1, x: 0 }}
       transition={{ duration: 0.3 }}
     >
-      {image ? (
-        <img 
-          src={`http://localhost:8000${image}`} 
-          alt={ingredient}
-          className="w-10 h-10 rounded-full object-cover mr-3"
-          onError={(e) => {
-            // If image fails to load, replace with emoji
-            const target = e.target as HTMLImageElement;
-            target.style.display = 'none';
-            const parent = target.parentElement;
-            if (parent) {
-              const fallback = document.createElement('div');
-              fallback.className = 'w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center mr-3';
-              fallback.innerHTML = `<span class="text-xl">${getIngredientEmoji(ingredient)}</span>`;
-              parent.insertBefore(fallback, parent.firstChild);
-            }
-          }}
-        />
-      ) : (
-        <div className="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center mr-3">
-          <span className="text-xl">{getIngredientEmoji(ingredient)}</span>
-        </div>
-      )}
+      {renderImage()}
       <div>
         <p className="font-medium">{ingredient}</p>
         {quantity && <p className="text-sm text-gray-600">{quantity}</p>}
@@ -259,12 +403,123 @@ export const IngredientVisual: React.FC<{
   );
 };
 
+// Cache for equipment image URLs
+const equipmentCache: Record<string, string | null> = {};
+
+// Function to get an equipment image URL
+export const getEquipmentImageUrl = async (equipmentName: string): Promise<string | null> => {
+  // Check cache first to avoid redundant API calls
+  if (equipmentName in equipmentCache) {
+    return equipmentCache[equipmentName];
+  }
+  
+  try {
+    // Try to find the equipment using the search endpoint
+    const response = await axios.get(`${API_URL}/ingredients?search=${encodeURIComponent(equipmentName)}&limit=5`);
+    
+    // Extract data from the nested structure
+    const responseData = response.data;
+    const data = responseData.data || responseData;
+    
+    if (data && data.ingredients && data.ingredients.length > 0) {
+      const equipment = data.ingredients;
+      const equipmentNameLower = equipmentName.toLowerCase();
+      
+      // First try to find exact matches
+      let bestMatch = null;
+      
+      // Try to find a match:
+      // 1. Exact match
+      // 2. Equipment name contains the search term
+      // 3. Search term contains the equipment name
+      for (const item of equipment) {
+        if (!item.name) continue;
+        
+        const itemLower = item.name.toLowerCase();
+        
+        // Exact match is the best
+        if (itemLower === equipmentNameLower) {
+          bestMatch = item;
+          break;
+        }
+        
+        // Equipment contains the search term
+        if (itemLower.includes(equipmentNameLower)) {
+          bestMatch = item;
+          break;
+        }
+        
+        // Search term contains the equipment
+        if (equipmentNameLower.includes(itemLower)) {
+          bestMatch = item;
+          // Don't break here - might find a better match
+        }
+      }
+      
+      // Use the best match if found
+      if (bestMatch && bestMatch.url) {
+        equipmentCache[equipmentName] = bestMatch.url;
+        return bestMatch.url;
+      }
+    }
+    
+    // Return placeholder if no match found
+    const placeholder = "https://objectstorage.ca-toronto-1.oraclecloud.com/p/u4hPf1DL-E9utS-Mh6HXZFsLBXFSzqUlgsrBJsWpjxxkz1Udy_-g3wveTokFV5G6/n/yzep9haqilyk/b/SizzleGeneratedImages/o/equipment/placeholder.png";
+    equipmentCache[equipmentName] = placeholder;
+    return placeholder;
+    
+  } catch (error) {
+    console.error(`Error fetching equipment image for ${equipmentName}:`, error);
+    
+    // Return placeholder on error
+    const placeholder = "https://objectstorage.ca-toronto-1.oraclecloud.com/p/u4hPf1DL-E9utS-Mh6HXZFsLBXFSzqUlgsrBJsWpjxxkz1Udy_-g3wveTokFV5G6/n/yzep9haqilyk/b/SizzleGeneratedImages/o/equipment/placeholder.png";
+    equipmentCache[equipmentName] = placeholder;
+    return placeholder;
+  }
+};
+
 // Equipment visualization component
 export const EquipmentVisual: React.FC<{
   equipment: string;
   image?: string;
 }> = ({ equipment, image }) => {
-  // Map common equipment to emoji icons
+  const [imageUrl, setImageUrl] = useState<string | null>(image || null);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  
+  // Fetch equipment image on mount
+  useEffect(() => {
+    let isMounted = true;
+    
+    const fetchImage = async () => {
+      // Skip if we already have an image
+      if (image) {
+        setImageUrl(image);
+        setIsLoading(false);
+        return;
+      }
+      
+      try {
+        const url = await getEquipmentImageUrl(equipment);
+        if (isMounted) {
+          setImageUrl(url);
+        }
+      } catch (error) {
+        console.error(`Error fetching image for ${equipment}:`, error);
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      }
+    };
+    
+    fetchImage();
+    
+    return () => {
+      isMounted = false;
+    };
+  }, [equipment, image]);
+  
+  // Map common equipment to emoji icons (as fallback)
   const getEquipmentEmoji = (eq: string): string => {
     const mapping: Record<string, string> = {
       'knife': '🔪',
@@ -298,6 +553,56 @@ export const EquipmentVisual: React.FC<{
     return '🍳';
   };
   
+  // Render image or fallback
+  const renderImage = () => {
+    if (isLoading) {
+      return (
+        <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center mr-3 animate-pulse">
+        </div>
+      );
+    }
+    
+    if (imageUrl) {
+      // Full URL handling - OCI URL or local URL
+      const fullUrl = imageUrl.startsWith('http') ? 
+                      imageUrl : 
+                      `${API_URL}${imageUrl.startsWith('/') ? '' : '/'}${imageUrl}`;
+      
+      return (
+        <img 
+          src={fullUrl}
+          alt={equipment}
+          className="w-10 h-10 rounded-full object-cover mr-3"
+          onError={(e) => {
+            // If image fails to load, use placeholder
+            const target = e.target as HTMLImageElement;
+            // Try to use a placeholder from the OCI bucket
+            const placeholder = "https://objectstorage.ca-toronto-1.oraclecloud.com/p/u4hPf1DL-E9utS-Mh6HXZFsLBXFSzqUlgsrBJsWpjxxkz1Udy_-g3wveTokFV5G6/n/yzep9haqilyk/b/SizzleGeneratedImages/o/equipment/placeholder.png";
+            target.src = placeholder;
+            target.onerror = () => {
+              // If placeholder also fails, hide the image
+              target.style.display = 'none';
+            };
+          }}
+        />
+      );
+    }
+    
+    // Fallback to placeholder image
+    return (
+      <img
+        src="https://objectstorage.ca-toronto-1.oraclecloud.com/p/u4hPf1DL-E9utS-Mh6HXZFsLBXFSzqUlgsrBJsWpjxxkz1Udy_-g3wveTokFV5G6/n/yzep9haqilyk/b/SizzleGeneratedImages/o/equipment/placeholder.png"
+        alt={equipment}
+        className="w-10 h-10 rounded-full object-cover mr-3"
+        onError={(e) => {
+          // Hide if placeholder also fails
+          const target = e.target as HTMLImageElement;
+          target.style.display = 'none';
+        }}
+      />
+    );
+  };
+  
   return (
     <motion.div 
       className="flex items-center bg-white p-3 rounded-lg shadow-sm mb-2"
@@ -305,29 +610,7 @@ export const EquipmentVisual: React.FC<{
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
     >
-      {image ? (
-        <img 
-          src={`http://localhost:8000${image}`} 
-          alt={equipment}
-          className="w-10 h-10 rounded-full object-cover mr-3"
-          onError={(e) => {
-            // If image fails to load, replace with emoji
-            const target = e.target as HTMLImageElement;
-            target.style.display = 'none';
-            const parent = target.parentElement;
-            if (parent) {
-              const fallback = document.createElement('div');
-              fallback.className = 'w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center mr-3';
-              fallback.innerHTML = `<span class="text-xl">${getEquipmentEmoji(equipment)}</span>`;
-              parent.insertBefore(fallback, parent.firstChild);
-            }
-          }}
-        />
-      ) : (
-        <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center mr-3">
-          <span className="text-xl">{getEquipmentEmoji(equipment)}</span>
-        </div>
-      )}
+      {renderImage()}
       <p className="font-medium">{equipment}</p>
     </motion.div>
   );

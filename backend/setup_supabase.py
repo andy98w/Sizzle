@@ -15,27 +15,14 @@ supabase = create_client(supabase_url, supabase_key)
 
 print(f"Connecting to Supabase at {supabase_url}...")
 
-sql_file_path = "./supabase_schema.sql"
-try:
-    with open(sql_file_path, "r") as file:
-        sql_commands = file.read()
-except FileNotFoundError:
-    print(f"Error: SQL file not found at {sql_file_path}")
-    exit(1)
-
 try:
     supabase.table("recipes").select("id").limit(1).execute()
-    print("Database connection verified.")
+    print("Database connection verified successfully!")
     
-    print("\nPlease run the SQL script in the Supabase SQL Editor:")
-    print("1. Go to https://app.supabase.com/")
-    print("2. Select your project")
-    print("3. Go to the SQL Editor")
-    print("4. Paste the contents of supabase_schema.sql")
-    print("5. Click 'Run'")
+    print("\nYour Supabase database is properly configured and connected.")
 except Exception as e:
     print(f"Error connecting to database: {e}")
+    print("\nMake sure the following tables exist in your Supabase database:")
+    print("- recipes: For storing recipe information")
+    print("- generated_images: For storing information about generated images")
     exit(1)
-
-print("\nFor security reasons, we can't execute arbitrary SQL directly from this script.")
-print("Please run the SQL script in your Supabase SQL Editor to set up the database schema.")

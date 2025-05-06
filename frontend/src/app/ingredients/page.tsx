@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { API_URL } from '@/config';
 
 // Custom hook for API fetching with better error handling
 function useFetch<T>(url: string, options?: RequestInit) {
@@ -191,8 +192,13 @@ export default function IngredientsPage() {
   // Function to check if database is populated with ingredients
   const checkDatabase = async () => {
     try {
-      const response = await fetch('http://localhost:8000/ingredients?limit=1');
-      const data = await response.json();
+      const response = await fetch(`${API_URL}/ingredients?limit=1`);
+      const responseData = await response.json();
+      
+      // Extract the data from the nested structure
+      const data = responseData.data || responseData;
+      
+      console.log("Check DB response:", data);
       
       if (data.total > 0) {
         setDbPopulated(true);
@@ -206,7 +212,7 @@ export default function IngredientsPage() {
       
       setLoading(false);
     } catch (error) {
-      /* Silently handle error */
+      console.error("Error checking database:", error);
       setLoading(false);
     }
   };
@@ -216,61 +222,61 @@ export default function IngredientsPage() {
     try {
       setLoading(true);
       const offset = (page - 1) * itemsPerPage;
-      const response = await fetch(`http://localhost:8000/ingredients?limit=${itemsPerPage}&offset=${offset}`);
-      const data = await response.json();
+      
+      // Build URL with search parameter if one exists
+      let url = `${API_URL}/ingredients?limit=${itemsPerPage}&offset=${offset}`;
+      if (searchQuery) {
+        url += `&search=${encodeURIComponent(searchQuery)}`;
+      }
+      
+      console.log("Fetching ingredients with URL:", url);
+      const response = await fetch(url);
+      const responseData = await response.json();
+      
+      // Extract the data from the nested structure
+      const data = responseData.data || responseData;
+      
+      console.log("Fetch ingredients response:", data);
       
       // Update total count if available
       if (data.total !== undefined) {
         setTotalIngredients(data.total);
       }
       
+      // Check if ingredients array exists
+      if (!data.ingredients || !Array.isArray(data.ingredients)) {
+        console.error("Invalid ingredients data format:", data);
+        setIngredients([]);
+        setLoading(false);
+        return;
+      }
+      
       // Map the data to our expected format
       const formattedIngredients = data.ingredients.map((item: any) => ({
+        id: item.id,
         name: item.name,
         imageUrl: item.url || '',
         prompt: item.prompt || defaultPromptTemplate.replace('{ingredient}', item.name)
       }));
       
+      console.log("Formatted ingredients:", formattedIngredients);
       
       setIngredients(formattedIngredients);
       setLoading(false);
     } catch (error) {
-      /* Silently handle error */
+      console.error("Error fetching ingredients:", error);
       setLoading(false);
     }
   };
   
   // Initial data loading
   useEffect(() => {
-    // Define fallback ingredients
-    const getFallbackIngredients = () => ["Salt", "Pepper", "Garlic", "Onion", "Tomato"].map(name => ({
-      name,
-      imageUrl: "",
-      prompt: defaultPromptTemplate.replace("{ingredient}", name)
-    }));
-    
     // Try to load from database first
     const initData = async () => {
       try {
         await checkDatabase();
-        
-        // Set fallback data after 5 seconds if database fails to load
-        const timer = setTimeout(() => {
-          if (ingredients.length === 0 && totalIngredients === 0) {
-            const fallbackData = getFallbackIngredients();
-            setIngredients(fallbackData);
-            if (totalIngredients === 0) {
-              setTotalIngredients(fallbackData.length);
-            }
-          }
-        }, 5000);
-        
-        return () => clearTimeout(timer);
       } catch (error) {
-        // Load fallback data immediately on error
-        const fallbackData = getFallbackIngredients();
-        setIngredients(fallbackData);
-        setTotalIngredients(fallbackData.length);
+        console.error("Error in initial data loading:", error);
       }
     };
     
@@ -278,41 +284,57 @@ export default function IngredientsPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   
-  // Fetch ingredients whenever the page changes or database is populated
+  // Fetch ingredients whenever the page changes, search query changes, or database is populated
   useEffect(() => {
     if (dbPopulated) {
+      // Reset to page 1 when search query changes
+      if (searchQuery !== '') {
+        setCurrentPage(1);
+      }
       fetchPagedIngredients(currentPage);
     }
-  }, [currentPage, dbPopulated, itemsPerPage]);
+  }, [currentPage, searchQuery, dbPopulated, itemsPerPage]);
+  
+  // Handle search submit
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    // Search is already handled by the useEffect, but we need this to handle form submission
+    fetchPagedIngredients(1);
+    setCurrentPage(1);
+  };
   
   // Fetch total count periodically
   useEffect(() => {
     if (!dbPopulated) return; // Skip if db not populated
     
     const fetchTotalCount = () => {
-      fetch('http://localhost:8000/ingredients?limit=1')
+      fetch(`${API_URL}/ingredients?limit=1`)
         .then(response => response.json())
-        .then(data => {
+        .then(responseData => {
+          // Handle nested response structure
+          const data = responseData.data || responseData;
+          console.log("Periodic check response:", data);
+          
           if (data.total > 0 && data.total !== totalIngredients) {
             setTotalIngredients(data.total);
           }
         })
-        .catch(() => {/* Silently handle errors */});
+        .catch((error) => {
+          console.error("Error in periodic check:", error);
+        });
     };
     
     // Run immediately on component mount if db is populated
     fetchTotalCount();
     
-    // Set interval for periodic updates
-    const intervalId = setInterval(fetchTotalCount, 10000);
+    // Set interval for periodic updates - using a longer interval of 30 seconds
+    const intervalId = setInterval(fetchTotalCount, 30000);
     return () => clearInterval(intervalId);
   }, [dbPopulated, totalIngredients]);
   
   
-  // Filter ingredients based on search query
-  const filteredIngredients = ingredients.filter(ingredient => 
-    searchQuery === '' || ingredient.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // We'll rely on backend filtering for search instead of client-side filtering
+  const filteredIngredients = ingredients;
   
   // Calculate pagination values
   const totalPages = Math.ceil(totalIngredients / itemsPerPage);
@@ -418,22 +440,30 @@ export default function IngredientsPage() {
       <h1 className="text-3xl font-bold mb-4">Ingredient Library</h1>
       
       {/* Search and filters */}
-      <div className="mb-6 flex flex-col md:flex-row gap-4">
+      <form onSubmit={handleSearchSubmit} className="mb-6 flex flex-col md:flex-row gap-4">
         <div className="flex-1">
           <label htmlFor="search" className="block text-sm font-medium text-gray-700 mb-1">
             Search ingredients
           </label>
-          <input
-            type="text"
-            id="search"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search by name..."
-            className="w-full p-2 border border-gray-300 rounded"
-          />
+          <div className="flex">
+            <input
+              type="text"
+              id="search"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search by name..."
+              className="w-full p-2 border border-gray-300 rounded-l"
+            />
+            <button 
+              type="submit"
+              className="bg-primary-500 text-white px-4 py-2 rounded-r hover:bg-primary-600"
+            >
+              Search
+            </button>
+          </div>
         </div>
         
-      </div>
+      </form>
       
       <p className="text-gray-600 mb-8">
         Showing {filteredIngredients.length} of {totalIngredients} ingredients (Page {currentPage} of {totalPages})
