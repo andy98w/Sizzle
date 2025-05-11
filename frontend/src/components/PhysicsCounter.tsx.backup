@@ -1,0 +1,1346 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { PHYSICS_CONSTANTS, getCounterFloorPosition } from '../utils/constants';
+import { getImageUrl } from '../utils';
+
+// Store random offsets per item to keep animations consistent
+const itemOffsets: Record<string, { jiggle: number, jiggleRotate: number, swipe: number, swipeRotate: number }> = {};
+
+// Function to get consistent random values for an item
+const getItemOffsets = (id: string) => {
+  if (!itemOffsets[id]) {
+    // Generate and store random values on first access
+    itemOffsets[id] = {
+      jiggle: 20 + (Math.random() * 15),       // Random jiggle between 20-35px
+      jiggleRotate: Math.random() * 10 - 5,    // Random rotation -5 to +5 degrees
+      swipe: -1000 - (Math.random() * 500),    // Random between -1000 and -1500px
+      swipeRotate: Math.random() * 15 - 7.5    // Random rotation -7.5 to +7.5 degrees
+    };
+  }
+  return itemOffsets[id];
+};
+
+// Get item transform based on animation state
+const getItemTransform = (item: Item, animationState: 'none' | 'jiggle' | 'swipe'): string => {
+  // Always center the item at (-50%, -50%) to avoid offsets
+  return 'translate(-50%, -50%)';
+};
+
+// Function to get the correct transition timing based on animation state
+const getItemTransition = (animationState: 'none' | 'jiggle' | 'swipe'): string => {
+  switch (animationState) {
+    case 'jiggle':
+      // Smoother, less jumpy animation
+      return 'transform 400ms cubic-bezier(0.25, 1, 0.5, 1.3)'; 
+      
+    case 'swipe':
+      // Longer, smoother timing
+      return 'transform 600ms cubic-bezier(0.33, 0.1, 0.67, 0.9)';
+      
+    default:
+      // Always include transform for smoother transitions
+      return 'transform 200ms ease-out, box-shadow 200ms ease-in-out';
+  }
+};
+
+// Function to generate a consistent color from a string
+const getColorFromString = (str: string, type: 'ingredient' | 'equipment' = 'ingredient'): string => {
+  // Simple hash function
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  
+  // Base colors
+  const hueOffset = type === 'ingredient' ? 0 : 180; // Different hue ranges for ingredients vs equipment
+  const hue = Math.abs(hash % 360) + hueOffset;
+  const saturation = 70 + (hash % 20); // 70-90%
+  const lightness = 45 + (hash % 15); // 45-60%
+  
+  return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+};
+
+interface Item {
+  id: string;
+  name: string;
+  type: 'ingredient' | 'equipment';
+  x: number;
+  y: number;
+  velocityX: number; // Horizontal velocity for collisions
+  velocityY: number; // Vertical velocity for collisions
+  size: number;
+  color: string;
+  dragging: boolean;
+  falling: boolean;
+  imageUrl?: string;
+  hasImageError?: boolean;
+  lastCollision?: number; // Timestamp to prevent repeated collisions
+}
+
+interface PhysicsCounterProps {
+  ingredients: { name: string }[];
+  equipment: { name: string }[];
+  onSlideChange?: (direction?: 1 | -1) => void;
+}
+
+// Helper type for collision data
+interface CollisionData {
+  item: Item;
+  dx: number;
+  dy: number;
+  distance: number;
+  minDistance: number;
+}
+
+const PhysicsCounter = React.forwardRef<{ 
+  exitAnimation: (direction?: 1 | -1) => void, 
+  exitAnimationNext: () => void, 
+  exitAnimationPrev: () => void 
+}, PhysicsCounterProps>(({ ingredients, equipment, onSlideChange }, ref) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+  const [isLoading, setIsLoading] = useState(true);
+  
+  // Use state to track the floor position (counter top)
+  const [floorY, setFloorY] = useState(0);
+  
+  // Use the getCounterFloorPosition function from constants.ts
+  useEffect(() => {
+    const updateFloorPosition = () => {
+      try {
+        // Use our utility function to get the floor position consistently
+        const viewportHeight = window.innerHeight;
+        let calculatedFloorY = getCounterFloorPosition(viewportHeight);
+        
+        // Safety check - floor should never be too low in the viewport
+        // If the floor is more than 80% down the screen, something is wrong
+        const maxAllowedY = viewportHeight * 0.85; // Safety threshold
+        if (calculatedFloorY > maxAllowedY) {
+          console.error('Floor position is too low! Adjusting to 75% of viewport height.');
+          calculatedFloorY = viewportHeight * 0.75; // Fallback to 75%
+        }
+        
+        console.log('PhysicsCounter - Setting floor Y to:', calculatedFloorY, 'px');
+        setFloorY(calculatedFloorY);
+        
+        // If we got a valid floor position, we can stop loading
+        setIsLoading(false);
+      } catch (error) {
+        console.warn('Counter not ready yet:', error);
+        // Keep loading state true until we have a valid floor position
+        setIsLoading(true);
+      }
+    };
+    
+    // Don't calculate initially - wait for the MutationObserver to detect the counter
+    
+    // Recalculate on window resize
+    window.addEventListener('resize', updateFloorPosition);
+    
+    // Add a MutationObserver to detect when the counter element appears
+    const observer = new MutationObserver(() => {
+      // Check for the counter element on any DOM change
+      if (document.getElementById('kitchen-counter-texture')) {
+        console.log('Counter element detected - updating floor position');
+        updateFloorPosition();
+      }
+    });
+    
+    // Start observing the document body for changes
+    observer.observe(document.body, { childList: true, subtree: true });
+    
+    // Try immediately in case the counter already exists
+    if (document.getElementById('kitchen-counter-texture')) {
+      updateFloorPosition();
+    }
+    
+    return () => {
+      window.removeEventListener('resize', updateFloorPosition);
+      observer.disconnect();
+    };
+  }, []);
+
+  // Items state with all necessary properties
+  const [items, setItems] = useState<Item[]>([]);
+  
+  // Track if any item is being dragged
+  const [isDragging, setIsDragging] = useState(false);
+  
+  // No longer hiding the title when dragging
+  
+  // Handle image loading errors
+  const handleImageError = (id: string) => {
+    // Log the error for debugging
+    console.log(`Image loading error for item: ${id}`);
+    
+    setItems(prevItems => 
+      prevItems.map(item => 
+        item.id === id ? { ...item, hasImageError: true } : item
+      )
+    );
+  };
+  
+  // Track hover state for showing name
+  const [hoveredItem, setHoveredItem] = useState<string | null>(null);
+  
+  // Animation state for slide transition
+  const [animationState, setAnimationState] = useState<'none' | 'jiggle' | 'swipe'>('none');
+  
+  // Direction of animation (1 = next/right-to-left, -1 = prev/left-to-right)
+  const [animationDirection, setAnimationDirection] = useState<1 | -1>(1);
+  
+  // Function to start the exit animation sequence
+  const startExitAnimation = (direction: 1 | -1 = 1) => {
+    // Reset animation state
+    setAnimationState('none');
+    // Set the animation direction
+    setAnimationDirection(direction);
+    
+    // Use requestAnimationFrame for better timing
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        // First jiggle in the appropriate direction
+        setAnimationState('jiggle');
+        
+        // Faster timing for animations
+        // Then after a shorter delay, swipe
+        setTimeout(() => {
+          setAnimationState('swipe');
+          
+          // After animation completes, call the onSlideChange callback
+          setTimeout(() => {
+            if (onSlideChange) {
+              onSlideChange(direction);
+            }
+          }, 750); // Increased to match SlideTransition timing
+        }, 300); // Adjusted to match jiggle animation
+      });
+    });
+  };
+  
+  // Make the animation function callable from parent
+  React.useImperativeHandle(
+    ref,
+    () => ({
+      exitAnimation: startExitAnimation,
+      exitAnimationNext: () => startExitAnimation(1),
+      exitAnimationPrev: () => startExitAnimation(-1)
+    }),
+    [startExitAnimation]
+  );
+  
+  // Initialize items on mount
+  useEffect(() => {
+    // Don't initialize if no container width or if floor position isn't ready
+    if (!containerRef.current || containerSize.width === 0 || floorY <= 0) return;
+    
+    console.log('Initializing physics items with floor position:', floorY);
+    
+    const allItems: Item[] = [];
+    
+    // Add ingredients
+    ingredients.forEach((ingredient, i) => {
+      const x = 50 + ((i % 5) * containerSize.width) / 6;
+      // Start items higher above the floor for a more dramatic fall
+      const y = -100 - (30 * Math.floor(i / 5));
+      
+      // Try to get the image URL for the ingredient
+      const ingredientName = ingredient.name.toLowerCase().trim();
+      // Direct URL to static folder images (not through API) for ingredient images
+      const imageUrl = ingredient.name.toLowerCase() === 'salt' 
+        ? 'http://localhost:8000/static/images/ingredients/salt.png'
+        : null;
+      
+      allItems.push({
+        id: `ingredient-${i}`,
+        name: ingredient.name,
+        type: 'ingredient',
+        x,
+        y,
+        velocityX: Math.random() * 2 - 1, // Initial random horizontal velocity
+        velocityY: 0,                     // Initial vertical velocity
+        size: 80,
+        color: getColorFromString(ingredient.name, 'ingredient'),
+        dragging: false,
+        falling: true,
+        imageUrl: imageUrl,
+        hasImageError: false,
+        lastCollision: 0
+      });
+    });
+    
+    // Add equipment
+    equipment.forEach((equip, i) => {
+      const x = containerSize.width - 50 - ((i % 5) * containerSize.width) / 6;
+      // Start items higher above the floor for a more dramatic fall
+      const y = -100 - (30 * Math.floor(i / 5));
+      
+      // Try to get the image URL for the equipment - none available for now
+      const equipmentName = equip.name.toLowerCase().trim();
+      const imageUrl = null; // No equipment images for now
+      
+      allItems.push({
+        id: `equipment-${i}`,
+        name: equip.name,
+        type: 'equipment',
+        x,
+        y,
+        velocityX: Math.random() * 2 - 1, // Initial random horizontal velocity
+        velocityY: 0,                     // Initial vertical velocity
+        size: 90,
+        color: getColorFromString(equip.name, 'equipment'),
+        dragging: false,
+        falling: true,
+        imageUrl: imageUrl,
+        hasImageError: false,
+        lastCollision: 0
+      });
+    });
+    
+    setItems(allItems);
+  }, [ingredients, equipment, containerSize.width, floorY]);
+  
+  // Get container dimensions on mount
+  useEffect(() => {
+    if (!containerRef.current) return;
+    
+    const updateSize = () => {
+      if (containerRef.current) {
+        setContainerSize({
+          width: containerRef.current.clientWidth,
+          height: containerRef.current.clientHeight
+        });
+      }
+    };
+    
+    updateSize();
+    window.addEventListener('resize', updateSize);
+    return () => window.removeEventListener('resize', updateSize);
+  }, []);
+  
+  // Animation frame for falling motion and collisions - Applied to ALL items at once
+  useEffect(() => {
+    // If no items are either falling or have velocity, don't set up animation
+    const needsAnimation = items.some(item => item.falling || Math.abs(item.velocityX) > 0.1 || Math.abs(item.velocityY) > 0.1);
+    if (!needsAnimation) return;
+    
+    // Track fall speeds separately for each item - using global constants
+    const fallSpeeds = items.reduce((acc, item) => {
+      acc[item.id] = acc[item.id] || (
+        PHYSICS_CONSTANTS.MIN_FALL_SPEED + 
+        Math.random() * (PHYSICS_CONSTANTS.MAX_FALL_SPEED - PHYSICS_CONSTANTS.MIN_FALL_SPEED)
+      );
+      return acc;
+    }, {} as Record<string, number>);
+    
+    let animationId: number;
+    
+    // Helper function to check if two items are colliding with improved precision
+    const checkCollision = (item1: Item, item2: Item): boolean => {
+      // Skip if either item is being dragged
+      if (item1.dragging || item2.dragging) return false;
+      
+      // Check collision cooldown to avoid rapid successive collisions
+      // Reduced cooldown for more responsive collisions
+      const now = Date.now();
+      if (item1.lastCollision && now - item1.lastCollision < PHYSICS_CONSTANTS.COLLISION_COOLDOWN) return false;
+      if (item2.lastCollision && now - item2.lastCollision < PHYSICS_CONSTANTS.COLLISION_COOLDOWN) return false;
+      
+      // Calculate distance between item centers
+      const dx = item2.x - item1.x;
+      const dy = item2.y - item1.y;
+      const distanceSquared = dx * dx + dy * dy;
+      
+      // Sum of radii
+      const minDistance = (item1.size / 2) + (item2.size / 2);
+      const minDistanceSquared = minDistance * minDistance;
+      
+      // Using squared distance for efficiency and precision
+      return distanceSquared < minDistanceSquared;
+    };
+    
+    // Handle collision between two items with improved rock-like physics
+    const resolveCollision = (item1: Item, item2: Item): [Item, Item] => {
+      // Calculate collision vector and distance
+      const dx = item2.x - item1.x;
+      const dy = item2.y - item1.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      
+      // Normalize collision vector
+      const nx = dx / distance;
+      const ny = dy / distance;
+      
+      // Sum of radii
+      const minDistance = (item1.size / 2) + (item2.size / 2);
+      
+      // Calculate overlap
+      const overlap = minDistance - distance;
+      
+      // Increase position correction strength to prevent overlap
+      const correctionFactor = PHYSICS_CONSTANTS.POSITION_CORRECTION;
+      
+      // Move items apart more aggressively to prevent overlap
+      const item1Updated = {
+        ...item1,
+        x: item1.x - (nx * overlap * correctionFactor * 0.5),
+        y: item1.y - (ny * overlap * correctionFactor * 0.5),
+      };
+      
+      const item2Updated = {
+        ...item2,
+        x: item2.x + (nx * overlap * correctionFactor * 0.5),
+        y: item2.y + (ny * overlap * correctionFactor * 0.5),
+      };
+      
+      // Calculate relative velocity between items
+      const dvx = item2.velocityX - item1.velocityX;
+      const dvy = item2.velocityY - item1.velocityY;
+      
+      // Calculate dot product of velocity and normal vector (relative velocity along collision normal)
+      const velAlongNormal = dvx * nx + dvy * ny;
+      
+      // If objects are moving away from each other, only correct positions but don't change velocities
+      if (velAlongNormal >= 0) return [item1Updated, item2Updated];
+      
+      // Calculate restitution (bounciness)
+      const restitution = PHYSICS_CONSTANTS.RESTITUTION;
+      
+      // Calculate impulse scalar
+      // j = -(1 + e) * velAlongNormal / (1/m1 + 1/m2)
+      // For equal masses of 1, this simplifies to:
+      const j = -(1 + restitution) * velAlongNormal / 2;
+      
+      // Calculate impulse vector
+      const impulsex = j * nx * PHYSICS_CONSTANTS.COLLISION_DAMPING;
+      const impulsey = j * ny * PHYSICS_CONSTANTS.COLLISION_DAMPING;
+      
+      // Add slight random variation for natural feel (reduced from previous version)
+      const randomFactor = 0.05;
+      const rx1 = (Math.random() * 2 - 1) * randomFactor;
+      const ry1 = (Math.random() * 2 - 1) * randomFactor;
+      const rx2 = (Math.random() * 2 - 1) * randomFactor;
+      const ry2 = (Math.random() * 2 - 1) * randomFactor;
+      
+      // Calculate new velocities with impulse
+      let newVelX1 = item1Updated.velocityX - impulsex;
+      let newVelY1 = item1Updated.velocityY - impulsey;
+      let newVelX2 = item2Updated.velocityX + impulsex;
+      let newVelY2 = item2Updated.velocityY + impulsey;
+      
+      // Add subtle randomness
+      newVelX1 += rx1;
+      newVelY1 += ry1;
+      newVelX2 += rx2;
+      newVelY2 += ry2;
+      
+      // Apply impulse to velocities with clamping
+      const item1Final = {
+        ...item1Updated,
+        velocityX: Math.min(
+          PHYSICS_CONSTANTS.MAX_COLLISION_SPEED, 
+          Math.max(-PHYSICS_CONSTANTS.MAX_COLLISION_SPEED, newVelX1)
+        ),
+        velocityY: Math.min(
+          PHYSICS_CONSTANTS.MAX_COLLISION_SPEED, 
+          Math.max(-PHYSICS_CONSTANTS.MAX_COLLISION_SPEED, newVelY1)
+        ),
+        lastCollision: Date.now()
+      };
+      
+      const item2Final = {
+        ...item2Updated,
+        velocityX: Math.min(
+          PHYSICS_CONSTANTS.MAX_COLLISION_SPEED, 
+          Math.max(-PHYSICS_CONSTANTS.MAX_COLLISION_SPEED, newVelX2)
+        ),
+        velocityY: Math.min(
+          PHYSICS_CONSTANTS.MAX_COLLISION_SPEED, 
+          Math.max(-PHYSICS_CONSTANTS.MAX_COLLISION_SPEED, newVelY2)
+        ),
+        lastCollision: Date.now()
+      };
+      
+      return [item1Final, item2Final];
+    };
+    
+    const animate = () => {
+      setItems(prevItems => {
+        // If all items are at rest, stop animation
+        if (!prevItems.some(item => item.falling || Math.abs(item.velocityX) > 0.1 || Math.abs(item.velocityY) > 0.1)) {
+          return prevItems;
+        }
+        
+        // First phase: update positions and apply gravity
+        let updatedItems = prevItems.map(item => {
+          // Skip items being dragged
+          if (item.dragging) return item;
+          
+          let newX = item.x;
+          let newY = item.y;
+          let newVelocityX = item.velocityX;
+          let newVelocityY = item.velocityY;
+          
+          // Apply gravity and falling logic
+          if (item.falling) {
+            // Update fall speed for naturally falling objects
+            fallSpeeds[item.id] *= PHYSICS_CONSTANTS.FALL_ACCELERATION;
+            newVelocityY += PHYSICS_CONSTANTS.GRAVITY;
+            
+            // Use established fall speed from previous logic
+            newY += fallSpeeds[item.id];
+          } else {
+            // Apply physics to items on the counter or in the air with velocity
+            newVelocityY += PHYSICS_CONSTANTS.GRAVITY;
+            
+            // Apply velocity to position
+            newX += newVelocityX;
+            newY += newVelocityY;
+            
+            // Apply friction for items on the counter
+            newVelocityX *= PHYSICS_CONSTANTS.FRICTION;
+            if (Math.abs(newVelocityX) < PHYSICS_CONSTANTS.MIN_COLLISION_SPEED) {
+              newVelocityX = 0;
+            }
+          }
+          
+          // Handle boundary collisions - left and right walls with improved rock-like bouncing
+          const itemRadius = item.size / 2;
+          const minX = itemRadius;
+          const maxX = containerSize.width - itemRadius;
+          
+          if (newX < minX) {
+            // Collision with left wall
+            newX = minX + 1; // Ensure it's not still inside the boundary
+            newVelocityX = -newVelocityX * PHYSICS_CONSTANTS.RESTITUTION;
+            // Add small random variation for natural look
+            newVelocityX += (Math.random() * 0.2 - 0.1);
+          } else if (newX > maxX) {
+            // Collision with right wall
+            newX = maxX - 1; // Ensure it's not still inside the boundary
+            newVelocityX = -newVelocityX * PHYSICS_CONSTANTS.RESTITUTION;
+            // Add small random variation for natural look
+            newVelocityX += (Math.random() * 0.2 - 0.1);
+          }
+          
+          // Check if item has reached the floor with improved bouncing
+          if (newY + itemRadius >= floorY) {
+            // Make the item rest on the counter with slight adjustments to prevent sticking
+            newY = floorY - itemRadius - 0.1;
+            
+            // Bounce with rock-like characteristics
+            if (Math.abs(newVelocityY) > PHYSICS_CONSTANTS.MIN_COLLISION_SPEED) {
+              // More elastic collision for counter surface
+              newVelocityY = -newVelocityY * PHYSICS_CONSTANTS.RESTITUTION;
+              
+              // If item has horizontal movement, apply more realistic friction
+              if (Math.abs(newVelocityX) > 0.1) {
+                newVelocityX *= PHYSICS_CONSTANTS.FRICTION;
+              }
+              
+              // If bounce is too small, stop vertical movement but preserve horizontal
+              if (Math.abs(newVelocityY) < 1.0) {
+                newVelocityY = 0;
+              }
+            } else {
+              newVelocityY = 0;
+            }
+            
+            // Item has landed
+            return {
+              ...item,
+              x: newX,
+              y: newY,
+              velocityX: newVelocityX,
+              velocityY: newVelocityY,
+              falling: Math.abs(newVelocityY) > 0.5 // Only keep falling if there's significant bounce
+            };
+          }
+          
+          return {
+            ...item,
+            x: newX,
+            y: newY,
+            velocityX: newVelocityX,
+            velocityY: newVelocityY
+          };
+        });
+        
+        // Second phase: resolve collisions between items
+        // Increased number of passes to make collisions more solid
+        const numCollisionPasses = PHYSICS_CONSTANTS.COLLISION_ITERATIONS;
+        
+        for (let pass = 0; pass < numCollisionPasses; pass++) {
+          // Check all pairs of items for collisions
+          for (let i = 0; i < updatedItems.length; i++) {
+            for (let j = i + 1; j < updatedItems.length; j++) {
+              if (checkCollision(updatedItems[i], updatedItems[j])) {
+                // Resolve collision
+                const [updatedItem1, updatedItem2] = resolveCollision(updatedItems[i], updatedItems[j]);
+                updatedItems[i] = updatedItem1;
+                updatedItems[j] = updatedItem2;
+              }
+            }
+          }
+        }
+        
+        return updatedItems;
+      });
+      
+      // Continue animation
+      animationId = requestAnimationFrame(animate);
+    };
+    
+    animationId = requestAnimationFrame(animate);
+    
+    return () => {
+      if (animationId) cancelAnimationFrame(animationId);
+    };
+  }, [items, floorY, containerSize.width]);
+  
+  // Handle mouse down on item
+  const handleMouseDown = (id: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    // Find the item - we now allow grabbing even while falling
+    const item = items.find(i => i.id === id);
+    if (!item) return;
+    
+    // Starting positions
+    const startX = item.x;
+    const startY = item.y;
+    const startMouseX = e.clientX;
+    const startMouseY = e.clientY;
+    
+    // Mark item as dragging
+    setItems(prevItems =>
+      prevItems.map(i =>
+        i.id === id ? { ...i, dragging: true } : i
+      )
+    );
+    
+    // Set global dragging state
+    setIsDragging(true);
+    
+    // Handle mouse move with enhanced collision prevention and pushing
+    const handleMouseMove = (e: MouseEvent) => {
+      setItems(prevItems => {
+        // Find the currently dragged item
+        const draggedItem = prevItems.find(i => i.id === id);
+        if (!draggedItem) return prevItems;
+
+        // Calculate requested position
+        const requestedX = startX + (e.clientX - startMouseX);
+        const requestedY = startY + (e.clientY - startMouseY);
+        const itemRadius = draggedItem.size / 2;
+
+        // Start with requested position but we'll adjust it for collisions
+        let newX = requestedX;
+        let newY = Math.min(requestedY, floorY - itemRadius); // Apply floor constraint immediately
+
+        // Calculate velocities based on mouse movement
+        const velocityX = (e.clientX - startMouseX) * 0.05;
+        const velocityY = (e.clientY - startMouseY) * 0.05;
+
+        // Create working copy of all items - we'll simulate all collisions on this array
+        let workingItems = prevItems.map(item => ({...item}));
+
+        // Update the dragged item position in our working set
+        const draggedItemIndex = workingItems.findIndex(i => i.id === id);
+        workingItems[draggedItemIndex] = {
+          ...workingItems[draggedItemIndex],
+          x: newX,
+          y: newY,
+          velocityX: velocityX,
+          velocityY: velocityY
+        };
+
+        // Keep track of which items have been updated in each iteration
+        // to avoid repetitive calculations
+        const updatedItemsThisIteration = new Set<string>();
+
+        // Simulate for multiple iterations to resolve all cascading collisions
+        const maxIterations = PHYSICS_CONSTANTS.DRAGGING_ITERATIONS;
+        for (let iteration = 0; iteration < maxIterations; iteration++) {
+          updatedItemsThisIteration.clear();
+          let hasCollisions = false;
+
+          // Check for collisions between all pairs of items
+          for (let i = 0; i < workingItems.length; i++) {
+            // Skip if not the dragged item and already updated this iteration
+            if (workingItems[i].id !== id && updatedItemsThisIteration.has(workingItems[i].id)) {
+              continue;
+            }
+
+            for (let j = 0; j < workingItems.length; j++) {
+              // Skip if same item or if other item is being dragged
+              if (i === j || workingItems[j].dragging) {
+                continue;
+              }
+
+              // Calculate distance between item centers
+              const dx = workingItems[i].x - workingItems[j].x;
+              const dy = workingItems[i].y - workingItems[j].y;
+              const distanceSquared = dx * dx + dy * dy;
+
+              // Sum of radii
+              const minDistance = (workingItems[i].size / 2) + (workingItems[j].size / 2);
+              const minDistanceSquared = minDistance * minDistance;
+
+              // If collision detected
+              if (distanceSquared < minDistanceSquared) {
+                hasCollisions = true;
+
+                // Normalize the collision vector
+                const distance = Math.sqrt(distanceSquared);
+                const nx = dx / distance;
+                const ny = dy / distance;
+
+                // Calculate overlap
+                const overlap = minDistance - distance;
+
+                // Determine which item to move based on whether it's the dragged item
+                if (workingItems[i].id === id) {
+                  // The dragged item stays put, only move the other item
+                  const pushFactor = PHYSICS_CONSTANTS.PUSH_FACTOR;
+
+                  // Calculate new position for the other item
+                  const pushX = workingItems[j].x - nx * overlap * pushFactor;
+                  const pushY = workingItems[j].y - ny * overlap * pushFactor;
+
+                  // Apply boundary constraints
+                  const otherRadius = workingItems[j].size / 2;
+                  const constrainedX = Math.max(
+                    otherRadius,
+                    Math.min(containerSize.width - otherRadius, pushX)
+                  );
+
+                  // Apply floor constraint
+                  const constrainedY = Math.min(pushY, floorY - otherRadius);
+
+                  // Update the pushed item
+                  workingItems[j] = {
+                    ...workingItems[j],
+                    x: constrainedX,
+                    y: constrainedY,
+                    velocityX: -nx * Math.abs(velocityX) * 0.9,
+                    velocityY: -ny * Math.abs(velocityY) * 0.9,
+                    lastCollision: Date.now()
+                  };
+
+                  // Mark as updated
+                  updatedItemsThisIteration.add(workingItems[j].id);
+                }
+                else if (workingItems[j].id === id) {
+                  // The dragged item stays put, only move the other item
+                  const pushFactor = PHYSICS_CONSTANTS.PUSH_FACTOR;
+
+                  // Calculate new position for the other item
+                  const pushX = workingItems[i].x + nx * overlap * pushFactor;
+                  const pushY = workingItems[i].y + ny * overlap * pushFactor;
+
+                  // Apply boundary constraints
+                  const otherRadius = workingItems[i].size / 2;
+                  const constrainedX = Math.max(
+                    otherRadius,
+                    Math.min(containerSize.width - otherRadius, pushX)
+                  );
+
+                  // Apply floor constraint
+                  const constrainedY = Math.min(pushY, floorY - otherRadius);
+
+                  // Update the pushed item
+                  workingItems[i] = {
+                    ...workingItems[i],
+                    x: constrainedX,
+                    y: constrainedY,
+                    velocityX: nx * Math.abs(velocityX) * 0.9,
+                    velocityY: ny * Math.abs(velocityY) * 0.9,
+                    lastCollision: Date.now()
+                  };
+
+                  // Mark as updated
+                  updatedItemsThisIteration.add(workingItems[i].id);
+                }
+                else {
+                  // Neither item is being dragged - apply normal collision response
+                  const pushFactor = PHYSICS_CONSTANTS.PUSH_FACTOR * 0.5; // Split the push between both items
+
+                  // Move both items apart
+                  workingItems[i] = {
+                    ...workingItems[i],
+                    x: workingItems[i].x + nx * overlap * pushFactor,
+                    y: workingItems[i].y + ny * overlap * pushFactor,
+                    lastCollision: Date.now()
+                  };
+
+                  workingItems[j] = {
+                    ...workingItems[j],
+                    x: workingItems[j].x - nx * overlap * pushFactor,
+                    y: workingItems[j].y - ny * overlap * pushFactor,
+                    lastCollision: Date.now()
+                  };
+
+                  // Mark both as updated
+                  updatedItemsThisIteration.add(workingItems[i].id);
+                  updatedItemsThisIteration.add(workingItems[j].id);
+                }
+              }
+            }
+          }
+
+          // Apply boundary constraints to all items after collision resolution
+          for (let i = 0; i < workingItems.length; i++) {
+            const item = workingItems[i];
+
+            if (updatedItemsThisIteration.has(item.id)) {
+              const radius = item.size / 2;
+
+              // Apply x-axis bounds
+              workingItems[i].x = Math.max(radius, Math.min(containerSize.width - radius, item.x));
+
+              // Apply floor constraint
+              workingItems[i].y = Math.min(item.y, floorY - radius);
+            }
+          }
+
+          // If no collisions were found, we're done
+          if (!hasCollisions) {
+            break;
+          }
+        }
+
+        // Return the modified array
+        return workingItems;
+      });
+    };
+    
+    // Handle mouse up with throwing physics
+    const handleMouseUp = () => {
+      setItems(prevItems =>
+        prevItems.map(i => {
+          if (i.id !== id) return i;
+          
+          // Check if item should fall - an item should fall if its bottom edge is above the floor
+          const itemRadius = i.size / 2;
+          // If the bottom edge (y + radius) is above the floor, it should fall
+          const shouldFall = (i.y + itemRadius) < floorY;
+          
+          // Keep velocity for throwing effect
+          return {
+            ...i,
+            dragging: false,
+            falling: shouldFall
+            // velocityX and velocityY are maintained from the last move event
+          };
+        })
+      );
+      
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      
+      // Reset global dragging state
+      setIsDragging(false);
+    };
+    
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  };
+  
+  // Handle touch start on item
+  const handleTouchStart = (id: string, e: React.TouchEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    // Find the item - we now allow grabbing even while falling
+    const item = items.find(i => i.id === id);
+    if (!item) return;
+    
+    // Get first touch
+    const touch = e.touches[0];
+    
+    // Starting positions
+    const startX = item.x;
+    const startY = item.y;
+    const startTouchX = touch.clientX;
+    const startTouchY = touch.clientY;
+    
+    // Store touch positions for velocity calculation
+    let lastTouchX = touch.clientX;
+    let lastTouchY = touch.clientY;
+    let touchTime = Date.now();
+    
+    // Mark item as dragging
+    setItems(prevItems =>
+      prevItems.map(i =>
+        i.id === id ? { ...i, dragging: true } : i
+      )
+    );
+    
+    // Set global dragging state
+    setIsDragging(true);
+    
+    // Handle touch move with enhanced collision prevention and pushing
+    const handleTouchMove = (e: TouchEvent) => {
+      e.preventDefault();
+      const touch = e.touches[0];
+
+      // Calculate velocity based on touch movement
+      const now = Date.now();
+      const dt = now - touchTime;
+      if (dt > 0) {
+        lastTouchX = touch.clientX;
+        lastTouchY = touch.clientY;
+        touchTime = now;
+      }
+
+      setItems(prevItems => {
+        // Find the currently dragged item
+        const draggedItem = prevItems.find(i => i.id === id);
+        if (!draggedItem) return prevItems;
+
+        // Calculate requested position
+        const requestedX = startX + (touch.clientX - startTouchX);
+        const requestedY = startY + (touch.clientY - startTouchY);
+        const itemRadius = draggedItem.size / 2;
+
+        // Start with requested position but we'll adjust it for collisions
+        let newX = requestedX;
+        let newY = Math.min(requestedY, floorY - itemRadius); // Apply floor constraint immediately
+
+        // Calculate velocities based on touch movement
+        const velocityX = (touch.clientX - lastTouchX) * 0.05;
+        const velocityY = (touch.clientY - lastTouchY) * 0.05;
+
+        // Create working copy of all items - we'll simulate all collisions on this array
+        let workingItems = prevItems.map(item => ({...item}));
+
+        // Update the dragged item position in our working set
+        const draggedItemIndex = workingItems.findIndex(i => i.id === id);
+        workingItems[draggedItemIndex] = {
+          ...workingItems[draggedItemIndex],
+          x: newX,
+          y: newY,
+          velocityX: velocityX,
+          velocityY: velocityY
+        };
+
+        // Keep track of which items have been updated in each iteration
+        // to avoid repetitive calculations
+        const updatedItemsThisIteration = new Set<string>();
+
+        // Simulate for multiple iterations to resolve all cascading collisions
+        const maxIterations = PHYSICS_CONSTANTS.DRAGGING_ITERATIONS;
+        for (let iteration = 0; iteration < maxIterations; iteration++) {
+          updatedItemsThisIteration.clear();
+          let hasCollisions = false;
+
+          // Check for collisions between all pairs of items
+          for (let i = 0; i < workingItems.length; i++) {
+            // Skip if not the dragged item and already updated this iteration
+            if (workingItems[i].id !== id && updatedItemsThisIteration.has(workingItems[i].id)) {
+              continue;
+            }
+
+            for (let j = 0; j < workingItems.length; j++) {
+              // Skip if same item or if other item is being dragged
+              if (i === j || workingItems[j].dragging) {
+                continue;
+              }
+
+              // Calculate distance between item centers
+              const dx = workingItems[i].x - workingItems[j].x;
+              const dy = workingItems[i].y - workingItems[j].y;
+              const distanceSquared = dx * dx + dy * dy;
+
+              // Sum of radii
+              const minDistance = (workingItems[i].size / 2) + (workingItems[j].size / 2);
+              const minDistanceSquared = minDistance * minDistance;
+
+              // If collision detected
+              if (distanceSquared < minDistanceSquared) {
+                hasCollisions = true;
+
+                // Normalize the collision vector
+                const distance = Math.sqrt(distanceSquared);
+                const nx = dx / distance;
+                const ny = dy / distance;
+
+                // Calculate overlap
+                const overlap = minDistance - distance;
+
+                // Determine which item to move based on whether it's the dragged item
+                if (workingItems[i].id === id) {
+                  // The dragged item stays put, only move the other item
+                  const pushFactor = PHYSICS_CONSTANTS.PUSH_FACTOR;
+
+                  // Calculate new position for the other item
+                  const pushX = workingItems[j].x - nx * overlap * pushFactor;
+                  const pushY = workingItems[j].y - ny * overlap * pushFactor;
+
+                  // Apply boundary constraints
+                  const otherRadius = workingItems[j].size / 2;
+                  const constrainedX = Math.max(
+                    otherRadius,
+                    Math.min(containerSize.width - otherRadius, pushX)
+                  );
+
+                  // Apply floor constraint
+                  const constrainedY = Math.min(pushY, floorY - otherRadius);
+
+                  // Update the pushed item
+                  workingItems[j] = {
+                    ...workingItems[j],
+                    x: constrainedX,
+                    y: constrainedY,
+                    velocityX: -nx * Math.abs(velocityX) * 0.9,
+                    velocityY: -ny * Math.abs(velocityY) * 0.9,
+                    lastCollision: Date.now()
+                  };
+
+                  // Mark as updated
+                  updatedItemsThisIteration.add(workingItems[j].id);
+                }
+                else if (workingItems[j].id === id) {
+                  // The dragged item stays put, only move the other item
+                  const pushFactor = PHYSICS_CONSTANTS.PUSH_FACTOR;
+
+                  // Calculate new position for the other item
+                  const pushX = workingItems[i].x + nx * overlap * pushFactor;
+                  const pushY = workingItems[i].y + ny * overlap * pushFactor;
+
+                  // Apply boundary constraints
+                  const otherRadius = workingItems[i].size / 2;
+                  const constrainedX = Math.max(
+                    otherRadius,
+                    Math.min(containerSize.width - otherRadius, pushX)
+                  );
+
+                  // Apply floor constraint
+                  const constrainedY = Math.min(pushY, floorY - otherRadius);
+
+                  // Update the pushed item
+                  workingItems[i] = {
+                    ...workingItems[i],
+                    x: constrainedX,
+                    y: constrainedY,
+                    velocityX: nx * Math.abs(velocityX) * 0.9,
+                    velocityY: ny * Math.abs(velocityY) * 0.9,
+                    lastCollision: Date.now()
+                  };
+
+                  // Mark as updated
+                  updatedItemsThisIteration.add(workingItems[i].id);
+                }
+                else {
+                  // Neither item is being dragged - apply normal collision response
+                  const pushFactor = PHYSICS_CONSTANTS.PUSH_FACTOR * 0.5; // Split the push between both items
+
+                  // Move both items apart
+                  workingItems[i] = {
+                    ...workingItems[i],
+                    x: workingItems[i].x + nx * overlap * pushFactor,
+                    y: workingItems[i].y + ny * overlap * pushFactor,
+                    lastCollision: Date.now()
+                  };
+
+                  workingItems[j] = {
+                    ...workingItems[j],
+                    x: workingItems[j].x - nx * overlap * pushFactor,
+                    y: workingItems[j].y - ny * overlap * pushFactor,
+                    lastCollision: Date.now()
+                  };
+
+                  // Mark both as updated
+                  updatedItemsThisIteration.add(workingItems[i].id);
+                  updatedItemsThisIteration.add(workingItems[j].id);
+                }
+              }
+            }
+          }
+
+          // Apply boundary constraints to all items after collision resolution
+          for (let i = 0; i < workingItems.length; i++) {
+            const item = workingItems[i];
+
+            if (updatedItemsThisIteration.has(item.id)) {
+              const radius = item.size / 2;
+
+              // Apply x-axis bounds
+              workingItems[i].x = Math.max(radius, Math.min(containerSize.width - radius, item.x));
+
+              // Apply floor constraint
+              workingItems[i].y = Math.min(item.y, floorY - radius);
+            }
+          }
+
+          // If no collisions were found, we're done
+          if (!hasCollisions) {
+            break;
+          }
+        }
+
+        // Return the modified array
+        return workingItems;
+      });
+    };
+    
+    // Handle touch end with throwing physics
+    const handleTouchEnd = () => {
+      setItems(prevItems =>
+        prevItems.map(i => {
+          if (i.id !== id) return i;
+          
+          // Check if item should fall - an item should fall if its bottom edge is above the floor
+          const itemRadius = i.size / 2;
+          // If the bottom edge (y + radius) is above the floor, it should fall
+          const shouldFall = (i.y + itemRadius) < floorY;
+          
+          // Keep velocity for throwing effect
+          return {
+            ...i,
+            dragging: false,
+            falling: shouldFall
+            // velocityX and velocityY are maintained from the last move event
+          };
+        })
+      );
+      
+      document.removeEventListener('touchmove', handleTouchMove);
+      document.removeEventListener('touchend', handleTouchEnd);
+      
+      // Reset global dragging state
+      setIsDragging(false);
+    };
+    
+    document.addEventListener('touchmove', handleTouchMove, { passive: false });
+    document.addEventListener('touchend', handleTouchEnd);
+  };
+  
+  return (
+    <div 
+      ref={containerRef}
+      style={{ 
+        width: '100vw',
+        height: '100vh',
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        overflow: 'visible',
+        backgroundColor: 'transparent',
+        zIndex: 9994,
+        pointerEvents: 'auto'
+      }}
+    >
+      {/* No floor marker visualization */}
+      
+      {/* Render all items */}
+      {items.map(item => (
+        <div
+          key={item.id}
+          style={{
+            position: 'absolute',
+            left: item.x,
+            top: item.y,
+            width: item.size,
+            height: item.size,
+            borderRadius: '50%',
+            backgroundColor: item.hasImageError ? item.color : 'transparent',
+            border: '3px solid #fff',
+            boxShadow: item.dragging ? '0 0 20px rgba(255,255,255,0.5)' : '2px 2px 10px rgba(0,0,0,0.3)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            overflow: 'hidden',
+            transform: 'translate(-50%, -50%)',
+            animationName: animationState === 'jiggle' 
+                          ? (animationDirection === 1 ? 'jiggleRightAnim' : 'jiggleLeftAnim')
+                          : animationState === 'swipe' 
+                          ? (animationDirection === 1 ? 'swipeLeftAnim' : 'swipeRightAnim')
+                          : 'none',
+            animationDuration: animationState === 'jiggle' ? '0.3s' : 
+                              animationState === 'swipe' ? '0.75s' : 
+                              '0s',
+            animationTimingFunction: animationState === 'jiggle' ? 'cubic-bezier(0.25, 1, 0.5, 1.3)' : 
+                                    animationState === 'swipe' ? 'cubic-bezier(0.33, 0.1, 0.67, 0.9)' : 
+                                    'ease-out',
+            animationFillMode: 'forwards',
+            zIndex: item.dragging ? 30000 : 25000, // Much higher z-index to appear above other elements
+            userSelect: 'none',
+            touchAction: 'none',
+            pointerEvents: 'auto',
+            cursor: 'grab', // Always show grab cursor to indicate draggable
+            transition: item.dragging ? 'none' : 'box-shadow 0.2s ease-in-out'
+          }}
+          onMouseDown={(e) => handleMouseDown(item.id, e)}
+          onTouchStart={(e) => handleTouchStart(item.id, e)}
+          onMouseEnter={() => setHoveredItem(item.id)}
+          onMouseLeave={() => setHoveredItem(null)}
+        >
+          {/* Display the image if available and hasn't errored */}
+          {item.imageUrl && !item.hasImageError && (
+            <img 
+              src={item.imageUrl}
+              alt={item.name}
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'contain',
+                borderRadius: '50%'
+              }}
+              onError={() => handleImageError(item.id)}
+            />
+          )}
+          
+          {/* Make the entire circle clickable */}
+          <div
+            style={{
+              position: 'absolute',
+              width: '100%',
+              height: '100%',
+              borderRadius: '50%',
+              top: 0,
+              left: 0,
+              cursor: 'grab', // Always grabbable
+            }}
+            onMouseDown={(e) => handleMouseDown(item.id, e)}
+            onTouchStart={(e) => handleTouchStart(item.id, e)}
+            onMouseEnter={() => setHoveredItem(item.id)}
+            onMouseLeave={() => setHoveredItem(null)}
+          />
+          
+          {/* Item name - only shown on hover */}
+          {(hoveredItem === item.id) && (
+            <div
+              style={{
+                position: 'absolute',
+                bottom: 'calc(100% + 5px)',
+                backgroundColor: 'rgba(0, 0, 0, 0.75)',
+                color: 'white',
+                padding: '4px 10px',
+                borderRadius: '9999px',
+                fontSize: '0.85rem',
+                fontWeight: 'bold',
+                whiteSpace: 'nowrap',
+                transform: 'translateX(-50%)',
+                boxShadow: '0 2px 5px rgba(0,0,0,0.3)',
+                zIndex: 30001, // Above everything else
+                transition: 'all 0.15s ease-in',
+                pointerEvents: 'none' // So it doesn't interfere with mouse events
+              }}
+            >
+              {item.name}
+            </div>
+          )}
+        </div>
+      ))}
+      
+      {/* Loading indicator with debug information */}
+      {isLoading && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: 'rgba(0, 0, 0, 0.7)',
+            backdropFilter: 'blur(4px)'
+          }}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', maxWidth: '500px' }}>
+            <div
+              style={{
+                width: '4rem',
+                height: '4rem',
+                border: '4px solid rgba(255, 255, 255, 0.2)',
+                borderTopColor: 'rgba(255, 255, 255, 0.8)',
+                borderRadius: '50%',
+                animation: 'spin 1s linear infinite',
+                marginBottom: '1rem'
+              }}
+            />
+            <p style={{ color: 'white', fontWeight: 500, fontSize: '18px', marginBottom: '8px' }}>
+              Waiting for counter element...
+            </p>
+            <div style={{ 
+              backgroundColor: 'rgba(255, 255, 255, 0.1)', 
+              padding: '10px', 
+              borderRadius: '8px',
+              color: 'rgba(255, 255, 255, 0.8)',
+              fontSize: '14px',
+              fontFamily: 'monospace',
+              maxWidth: '100%',
+              overflow: 'auto',
+              textAlign: 'left'
+            }}>
+              <p>Debug info:</p>
+              <ul style={{ paddingLeft: '20px', margin: '5px 0' }}>
+                <li>Floor Y: {floorY}</li>
+                <li>Window height: {window.innerHeight}</li>
+                <li>Expected position: {window.innerHeight * 0.75}px (75% of viewport)</li>
+                <li>Counter element: {document.getElementById('kitchen-counter-texture') ? 'Found' : 'Not found'}</li>
+                <li>Container width: {containerSize.width}px</li>
+              </ul>
+              <p style={{ marginTop: '10px', color: 'yellow' }}>
+                If loading persists, please refresh the page.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      <style jsx global>{`
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+        
+        /* Next slide animations (right to left) */
+        @keyframes jiggleRightAnim {
+          0% { transform: translate(-50%, -50%); }
+          65% { transform: translate(-50%, -50%) translateX(30px) rotate(4deg); }
+          85% { transform: translate(-50%, -50%) translateX(25px) rotate(2deg); }
+          100% { transform: translate(-50%, -50%) translateX(28px) rotate(3deg); }
+        }
+        
+        @keyframes swipeLeftAnim {
+          0% { transform: translate(-50%, -50%) translateX(28px) rotate(3deg); }
+          100% { transform: translate(-50%, -50%) translateX(-1200px) rotate(-10deg); }
+        }
+        
+        /* Previous slide animations (left to right) */
+        @keyframes jiggleLeftAnim {
+          0% { transform: translate(-50%, -50%); }
+          65% { transform: translate(-50%, -50%) translateX(-30px) rotate(-4deg); }
+          85% { transform: translate(-50%, -50%) translateX(-25px) rotate(-2deg); }
+          100% { transform: translate(-50%, -50%) translateX(-28px) rotate(-3deg); }
+        }
+        
+        @keyframes swipeRightAnim {
+          0% { transform: translate(-50%, -50%) translateX(-28px) rotate(-3deg); }
+          100% { transform: translate(-50%, -50%) translateX(1200px) rotate(10deg); }
+        }
+        
+        /* Make animations run at a consistent speed */
+        .physics-item {
+          animation-timing-function: cubic-bezier(0.33, 0.1, 0.67, 0.9) !important;
+        }
+        
+        .physics-item {
+          position: absolute;
+          border-radius: 50%;
+          transform: translate(-50%, -50%);
+          transition: box-shadow 0.2s ease-out;
+          transform-origin: center center;
+        }
+        
+        .physics-item.dragging {
+          box-shadow: 0 0 20px rgba(255,255,255,0.5) !important;
+          z-index: 30000 !important;
+          transition: none !important;
+        }
+      `}</style>
+    </div>
+  );
+})
+
+export default PhysicsCounter;

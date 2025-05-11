@@ -43,18 +43,113 @@ export default function AnimatedRecipePage() {
     
     try {
       const response = await axios.post(`${API_URL}/recipe/parse`, { query });
-      
-      // Check if the response has matching_recipes array
-      if (response.data.matching_recipes && Array.isArray(response.data.matching_recipes)) {
-        setMatchingRecipes(response.data.matching_recipes);
-        
-        // If there's only one recipe, select it automatically
-        if (response.data.matching_recipes.length === 1) {
-          setSelectedRecipe(formatRecipe(response.data.matching_recipes[0]));
+      console.log("API response:", response.data);
+
+      try {
+        // Check if the response has matching_recipes array
+        if (response.data.matching_recipes && Array.isArray(response.data.matching_recipes)) {
+          const recipes = response.data.matching_recipes;
+
+          if (recipes.length === 0) {
+            setError('No recipes found for your search. Please try a different query.');
+            return;
+          }
+
+          setMatchingRecipes(recipes);
+
+          // If there's only one recipe, select it automatically and show slideshow
+          if (recipes.length === 1) {
+            const formattedRecipe = formatRecipe(recipes[0]);
+            setSelectedRecipe(formattedRecipe);
+            // Always show slideshow for single recipes
+            setTimeout(() => setShowSlideshow(true), 50);
+          } else if (recipes.length > 0) {
+            // If there are multiple recipes, still select the first one but don't show slideshow yet
+            const formattedRecipe = formatRecipe(recipes[0]);
+            setSelectedRecipe(formattedRecipe);
+            // Don't show slideshow yet for multiple recipes
+          }
+        } else if (response.data && (response.data.title || response.data.steps)) {
+          // Legacy format - single recipe
+          const formattedRecipe = formatRecipe(response.data);
+          setSelectedRecipe(formattedRecipe);
+          // Always show slideshow for single recipes
+          setTimeout(() => setShowSlideshow(true), 50);
+        } else {
+          // No existing recipe found, let's generate one
+          console.log("No matching recipes found, will attempt to generate a new recipe");
+          try {
+            // Update loading state with a message about generation
+            setIsLoading(true);
+            setError(null);
+
+            // Create a dedicated loading message element instead of modifying existing ones
+            const loadingEl = document.getElementById('generation-loading-message');
+            if (loadingEl) {
+              loadingEl.textContent = 'Generating a new recipe for you...';
+            }
+
+            // Use the existing /recipe/parse endpoint since /recipe/generate doesn't exist
+            const generationResponse = await axios.post(`${API_URL}/recipe/parse`, {
+              query: query
+            });
+
+            console.log("Generation response:", generationResponse.data);
+
+            if (generationResponse.data && generationResponse.data.matching_recipes && generationResponse.data.matching_recipes.length > 0) {
+              // Successfully got recipe(s) from API
+              const recipes = generationResponse.data.matching_recipes;
+              console.log("Got matching recipes:", recipes.length);
+
+              // Select the first recipe
+              const recipe = recipes[0];
+              const formattedRecipe = formatRecipe(recipe);
+
+              // Now save the generated recipe to the database if it doesn't already have an ID
+              if (!formattedRecipe.id) {
+                try {
+                  // Save the recipe to appear in My Recipes
+                  const saveResponse = await axios.post(`${API_URL}/recipes`, formattedRecipe);
+                  console.log("Recipe saved with ID:", saveResponse.data.id);
+
+                  // Update recipe with the assigned ID
+                  formattedRecipe.id = saveResponse.data.id;
+                } catch (saveError) {
+                  console.error("Error saving generated recipe:", saveError);
+                  // Continue even if save fails - we can still display the recipe
+                }
+              }
+
+              setSelectedRecipe(formattedRecipe);
+              setTimeout(() => setShowSlideshow(true), 50);
+            } else {
+              // Generation also failed
+              console.error("Failed to generate recipe:", generationResponse.data);
+              setError('Unable to generate a recipe. Please try with more specific ingredients or dish name.');
+            }
+          } catch (genError) {
+            console.error("Error generating recipe:", genError);
+            let errorMessage = 'Failed to generate a recipe.';
+
+            // Check if it's an API error with a message
+            if (genError.response && genError.response.data && genError.response.data.message) {
+              errorMessage += ` API says: ${genError.response.data.message}`;
+            } else if (genError.message) {
+              errorMessage += ` Error: ${genError.message}`;
+            }
+
+            // Add recommendation
+            errorMessage += ' Please try using more specific ingredients or dish names.';
+
+            setError(errorMessage);
+          } finally {
+            // Always reset loading state
+            setIsLoading(false);
+          }
         }
-      } else {
-        // Legacy format - single recipe
-        setSelectedRecipe(formatRecipe(response.data));
+      } catch (formatErr) {
+        console.error("Error processing recipe data:", formatErr);
+        setError('Error processing recipe data. Please try a different search.');
       }
     } catch (error) {
       console.error('Error fetching recipe:', error);
@@ -66,12 +161,59 @@ export default function AnimatedRecipePage() {
   
   // Format recipe data to ensure consistent field names
   const formatRecipe = (recipe: any): Recipe => {
+    // Basic validation - ensure recipe has required fields
+    if (!recipe || typeof recipe !== 'object') {
+      console.error("Invalid recipe data:", recipe);
+      throw new Error("Invalid recipe data received");
+    }
+
+    // Ensure title exists, with fallback
+    if (!recipe.title) {
+      console.warn("Recipe missing title, using default");
+      recipe.title = "Untitled Recipe";
+    }
+
+    // Ensure description exists, with fallback
+    if (!recipe.description) {
+      console.warn("Recipe missing description, using default");
+      recipe.description = "A delicious recipe.";
+    }
+
+    // Set default servings if missing
+    if (!recipe.servings || isNaN(recipe.servings)) {
+      console.warn("Recipe missing servings, using default");
+      recipe.servings = 2;
+    }
+
+    // Ensure steps, ingredients, and equipment are arrays
+    if (!Array.isArray(recipe.steps)) {
+      console.warn("Recipe missing steps, using empty array");
+      recipe.steps = [];
+    }
+
+    if (!Array.isArray(recipe.ingredients)) {
+      console.warn("Recipe missing ingredients, using empty array");
+      recipe.ingredients = [];
+    }
+
+    if (!Array.isArray(recipe.equipment)) {
+      console.warn("Recipe missing equipment, using empty array");
+      recipe.equipment = [];
+    }
+
+    console.log("Formatted recipe:", {
+      title: recipe.title,
+      steps: recipe.steps.length,
+      ingredients: recipe.ingredients.length,
+      equipment: recipe.equipment.length
+    });
+
     return {
       id: recipe.id,
       title: recipe.title,
       description: recipe.description,
-      prepTime: recipe.prepTime || recipe.prep_time,
-      cookTime: recipe.cookTime || recipe.cook_time,
+      prepTime: recipe.prepTime || recipe.prep_time || "10 mins",
+      cookTime: recipe.cookTime || recipe.cook_time || "20 mins",
       servings: recipe.servings,
       ingredients: recipe.ingredients || [],
       equipment: recipe.equipment || [],
@@ -81,8 +223,14 @@ export default function AnimatedRecipePage() {
   
   const selectRecipe = (recipe: Recipe) => {
     const formattedRecipe = formatRecipe(recipe);
+    console.log("Selecting recipe:", formattedRecipe);
     setSelectedRecipe(formattedRecipe);
-    setShowSlideshow(true);
+
+    // Explicitly set showSlideshow to true after a short delay
+    // This ensures state updates are processed in the correct order
+    setTimeout(() => {
+      setShowSlideshow(true);
+    }, 50);
   };
 
   
@@ -90,15 +238,18 @@ export default function AnimatedRecipePage() {
     <div className="h-full min-h-screen">
       {/* Slideshow Display */}
       {selectedRecipe && !isLoading && showSlideshow && (
-        <SlideshowRecipe 
-          recipe={selectedRecipe} 
+        <SlideshowRecipe
+          recipe={selectedRecipe}
           onClose={() => {
-            if (matchingRecipes.length > 1) {
-              setSelectedRecipe(null);
-            } 
+            // Always reset the slideshow state first
             setShowSlideshow(false);
-            setSelectedRecipe(null);
-          }} 
+
+            // If we have multiple recipes, keep the selected recipe to show in the list
+            // Otherwise clear it completely
+            if (matchingRecipes.length <= 1) {
+              setSelectedRecipe(null);
+            }
+          }}
         />
       )}
       
@@ -157,7 +308,7 @@ export default function AnimatedRecipePage() {
           <div className="flex justify-center py-12">
             <div className="flex flex-col items-center">
               <div className="w-16 h-16 border-4 border-primary-200 border-t-primary-500 rounded-full animate-spin mb-4"></div>
-              <p className="text-gray-600">Finding and animating your recipe...</p>
+              <p className="text-gray-600" id="generation-loading-message">Finding and animating your recipe...</p>
             </div>
           </div>
         )}
@@ -219,8 +370,8 @@ export default function AnimatedRecipePage() {
                         <motion.button
                           onClick={(e) => {
                             e.stopPropagation();
-                            setSelectedRecipe(formatRecipe(recipe));
-                            setShowSlideshow(true);
+                            // Use the selectRecipe function for consistency
+                            selectRecipe(recipe);
                           }}
                           className="bg-primary-500 rounded-full p-2 text-white"
                           whileHover={{ scale: 1.1 }}

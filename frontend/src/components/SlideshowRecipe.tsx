@@ -30,6 +30,8 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
     if (currentSlide < totalSlides - 1) {
       // If we're on the ingredients slide (slide 1), trigger the animation
       if (currentSlide === 1 && physicsCounterRef.current) {
+        setIngredientsAnimating(true);
+        setAnimationDirection(1);
         physicsCounterRef.current.exitAnimationNext();
         // Animation will call changeSlide() after completion
       } else {
@@ -38,16 +40,30 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
     }
   }
   
+  // Animation states for synchronization
+  const [ingredientsAnimating, setIngredientsAnimating] = useState(false);
+  const [animationDirection, setAnimationDirection] = useState<1 | -1>(1);
+  const [isChangingSlide, setIsChangingSlide] = useState(false);
+  
   // Function to change slides after animation completes
   function changeSlide(dir: number) {
     setDirection(dir);
     setCurrentSlide(currentSlide + dir);
+    setIngredientsAnimating(false);
+    setIsChangingSlide(true);
+    
+    // Add a shorter delay before allowing another slide change
+    setTimeout(() => {
+      setIsChangingSlide(false);
+    }, 300); // Shorter cool-down period that won't block navigation
   }
   
   function goToPrevious() {
     if (currentSlide > 0) {
       // If we're on the ingredients slide (slide 1), trigger the animation in reverse
       if (currentSlide === 1 && physicsCounterRef.current) {
+        setIngredientsAnimating(true);
+        setAnimationDirection(-1);
         physicsCounterRef.current.exitAnimationPrev();
         // Animation will call changeSlide() after completion
       } else {
@@ -65,6 +81,9 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
   // Handle keyboard navigation
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
+      // Add check to not process keys if the slide is changing
+      if (isChangingSlide) return;
+      
       if (e.key === 'ArrowRight') {
         goToNext();
       } else if (e.key === 'ArrowLeft') {
@@ -79,7 +98,7 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [currentSlide]);
+  }, [currentSlide, isChangingSlide]); // Add isChangingSlide as dependency
   
   // Animation variants
   const slideVariants = {
@@ -111,6 +130,14 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
       opacity: 0,
       scale: 1,
     }),
+  };
+  
+  // Transition configuration for slides
+  const slideTransition = { 
+    type: 'spring', 
+    stiffness: 300, 
+    damping: 30,
+    duration: 0.5 
   };
   
   // Render dot indicators
@@ -173,11 +200,11 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
       {/* Standalone close button outside of any container */}
       <button
         onClick={handleClose}
-        style={{ 
+        style={{
           position: 'fixed',
-          top: '1rem',
+          top: 'calc(1rem + 50px)', // Positioned below navbar
           right: '1rem',
-          zIndex: 60000,
+          zIndex: 9800, // High but below navbar
           width: '40px',
           height: '40px',
           borderRadius: '50%',
@@ -197,8 +224,8 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
         </svg>
       </button>
     
-      <div 
-        className="fixed inset-0 flex items-center justify-center z-[9999] slideshow-active"
+      <div
+        className="fixed inset-0 flex items-center justify-center z-[9500] slideshow-active"
         style={{
           position: 'fixed',
           top: 0,
@@ -210,7 +237,8 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
           backgroundColor: 'transparent',
           backdropFilter: 'none',
           overflow: 'visible', // Allow content to overflow
-          pointerEvents: 'auto' // Ensure interactions work
+          pointerEvents: 'auto', // Ensure interactions work
+          marginTop: '50px' // Add space for navbar
         }}>
       {/* Removed custom background - now using the global background */}
       
@@ -321,14 +349,29 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
                 >
                   <div className="flex-1 flex flex-col p-4 md:p-8 h-full m-4" style={{ pointerEvents: 'auto', position: 'relative' }}>
                     {/* Title section - black text */}
-                    <div className="p-4 mb-4 ingredients-title transition-opacity duration-300" style={{ zIndex: 1, position: 'relative', pointerEvents: 'none' }}>
+                    <motion.div
+                      className="p-4 mb-4 ingredients-title transition-opacity duration-300" 
+                      style={{ zIndex: 1, position: 'relative', pointerEvents: 'none' }}
+                      animate={{
+                        x: ingredientsAnimating
+                          ? animationDirection === 1 
+                            ? ['0%', '5%', '4%', '-100%']
+                            : ['0%', '-5%', '-4%', '100%']
+                          : '0%'
+                      }}
+                      transition={{
+                        duration: 1.05, // Increased to match total physics animation (0.3 + 0.75)
+                        times: [0, 0.29, 0.38, 1],
+                        ease: ["easeOut", "easeOut", "easeIn"]
+                      }}
+                    >
                       <h2 className="text-3xl font-bold text-center text-black">
                         Ingredients & Equipment
                       </h2>
                       <p className="text-center text-black">
                         Drag and interact with the items on the counter
                       </p>
-                    </div>
+                    </motion.div>
                     
                     {/* Full viewport physics container */}
                     <div style={{ position: 'static', width: '100%', height: '100%' }}>
