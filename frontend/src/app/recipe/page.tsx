@@ -108,20 +108,31 @@ const sampleRecipe = {
 
 export default function RecipePage() {
   const [recipe, setRecipe] = useState(sampleRecipe);
-  const [showSlideshow, setShowSlideshow] = useState(false);
-  
+  const [showSlideshow, setShowSlideshow] = useState(true); // Start with slideshow open
+
   // Proper handler to close the slideshow
   const handleClose = () => {
     setShowSlideshow(false);
   };
-  
+
   // Start the slideshow
   const startSlideshow = () => {
     setShowSlideshow(true);
   };
-  
+
+  // Prevent body scrolling when slideshow is active
+  React.useEffect(() => {
+    if (showSlideshow) {
+      const originalOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => {
+        document.body.style.overflow = originalOverflow;
+      };
+    }
+  }, [showSlideshow]);
+
   return (
-    <div className="h-full min-h-screen pt-6">
+    <div className="fixed inset-0 top-[73px] overflow-hidden flex flex-col">
       {/* Slideshow Display */}
       {showSlideshow && (
         <SlideshowRecipe
@@ -131,7 +142,7 @@ export default function RecipePage() {
       )}
 
       {/* Recipe Overview Page - only shown when slideshow is not active */}
-      <div className={`container mx-auto px-4 max-w-5xl ${showSlideshow ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+      <div className={`container mx-auto px-4 max-w-5xl flex-1 overflow-y-auto pt-6 ${showSlideshow ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
         <motion.div 
           className="bg-white rounded-2xl shadow-md overflow-hidden mb-8"
           initial={{ opacity: 0, y: 30 }}

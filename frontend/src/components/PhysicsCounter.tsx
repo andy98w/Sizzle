@@ -168,9 +168,17 @@ const PhysicsCounter = React.forwardRef<{
     console.log(`Image loading error for item: ${id}`);
 
     setItems(prevItems =>
-      prevItems.map(item =>
-        item.id === id ? { ...item, hasImageError: true } : item
-      )
+      prevItems.map(item => {
+        if (item.id === id) {
+          // Set the appropriate placeholder based on type
+          const placeholderUrl = item.type === 'ingredient'
+            ? 'http://localhost:8000/static/images/ingredients_clean/placeholder_ingredient.png'
+            : 'http://localhost:8000/static/images/equipment_clean/placeholder_equipment.png';
+
+          return { ...item, hasImageError: true, imageUrl: placeholderUrl };
+        }
+        return item;
+      })
     );
 
     // Count error as "loaded" so we don't wait forever
@@ -1712,7 +1720,7 @@ const PhysicsCounter = React.forwardRef<{
             width: item.size,
             height: item.size,
             borderRadius: '50%',
-            backgroundColor: item.hasImageError ? item.color : 'transparent',
+            backgroundColor: 'transparent',
             border: '3px solid #fff',
             boxShadow: item.dragging
               ? '0 0 20px rgba(255,255,255,0.5)'
@@ -1750,8 +1758,8 @@ const PhysicsCounter = React.forwardRef<{
           onMouseEnter={() => setHoveredItem(item.id)}
           onMouseLeave={() => setHoveredItem(null)}
         >
-          {/* Display the image if available and hasn't errored */}
-          {item.imageUrl && !item.hasImageError && (
+          {/* Display the image if available (including placeholder) */}
+          {item.imageUrl && (
             <img
               src={item.imageUrl}
               alt={item.name}

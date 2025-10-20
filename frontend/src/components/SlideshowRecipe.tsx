@@ -602,26 +602,26 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
                   initial="enter"
                   animate="center"
                   exit="exit"
-                  transition={{ 
-                    type: 'spring', 
-                    stiffness: 300, 
+                  transition={{
+                    type: 'spring',
+                    stiffness: 300,
                     damping: 30,
-                    duration: 0.5 
+                    duration: 0.5
                   }}
                   className="absolute inset-0 flex flex-col md:flex-row w-full m-4"
                 >
                   {/* Step number */}
-                  <div className="md:w-1/2 rounded-l-3xl shadow-lg p-10 md:p-12 flex flex-col items-center justify-center frosted-glass">
+                  <div className="md:w-1/2 p-10 md:p-12 flex flex-col items-center justify-center" style={{ backgroundColor: 'transparent', border: 'none' }}>
                     <div className="w-32 h-32 bg-primary-100 rounded-full flex items-center justify-center">
                       <span className="text-5xl font-bold text-primary-600">
                         {currentSlide - 1}
                       </span>
                     </div>
                   </div>
-                  
+
                   {/* Step instructions and ingredients/equipment */}
-                  <div className="md:w-1/2 rounded-r-3xl shadow-lg p-6 md:p-10 flex flex-col custom-scrollbar overflow-y-auto h-full frosted-glass">
-                    <div className="sticky top-0 z-10 pb-2 frosted-glass">
+                  <div className="md:w-1/2 p-6 md:p-10 flex flex-col custom-scrollbar overflow-y-auto h-full" style={{ backgroundColor: 'transparent', border: 'none' }}>
+                    <div className="sticky top-0 z-10 pb-2" style={{ backgroundColor: 'transparent' }}>
                       <h2 className="text-3xl font-bold mb-4 text-gray-800">
                         Step {currentSlide - 1}
                       </h2>

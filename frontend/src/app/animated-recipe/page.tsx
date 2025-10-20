@@ -390,27 +390,81 @@ export default function AnimatedRecipePage() {
                             // Use the selectRecipe function for consistency
                             selectRecipe(recipe);
                           }}
-                          className="bg-primary-500 rounded-full p-2 text-white"
+                          className="bg-primary-500 rounded-full p-3 text-white"
                           whileHover={{ scale: 1.1 }}
+                          title="Start slideshow"
                         >
-                          <FaPlayCircle />
+                          <FaPlayCircle size={20} />
                         </motion.button>
-                        <motion.div
-                          className="bg-primary-100 rounded-full p-2 text-primary-600"
-                          whileHover={{ x: 5 }}
-                        >
-                          <FaArrowRight />
-                        </motion.div>
                       </div>
                     </div>
                   </motion.div>
                 ))}
               </div>
+
+              {/* Generate New Recipe Button */}
+              <motion.div
+                className="mt-6 p-6 border-2 border-dashed border-gray-300 rounded-lg bg-gray-50 text-center"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, delay: 0.2 }}
+              >
+                <p className="text-gray-600 mb-4">Can't find what you're looking for?</p>
+                <motion.button
+                  onClick={async () => {
+                    setIsLoading(true);
+                    setError(null);
+
+                    try {
+                      // Generate a new recipe using the current query
+                      const response = await axios.post(`${API_URL}/recipe/generate`, { query });
+                      console.log("Generation response:", response.data);
+
+                      // Handle the response
+                      const responseData = response.data.data || response.data;
+                      if (responseData && (responseData.title || responseData.steps)) {
+                        const formattedRecipe = formatRecipe(responseData);
+
+                        // Save the generated recipe to the database if it doesn't have an ID
+                        if (!formattedRecipe.id) {
+                          try {
+                            const saveResponse = await axios.post(`${API_URL}/recipes`, formattedRecipe);
+                            console.log("Recipe saved with ID:", saveResponse.data.id);
+                            formattedRecipe.id = saveResponse.data.id;
+                          } catch (saveError) {
+                            console.error("Error saving generated recipe:", saveError);
+                          }
+                        }
+
+                        setSelectedRecipe(formattedRecipe);
+                        setIsLoading(false);
+                        setTimeout(() => setShowSlideshow(true), 50);
+                      } else {
+                        setError('Unable to generate a recipe. Please try with more specific ingredients or dish name.');
+                        setIsLoading(false);
+                      }
+                    } catch (error) {
+                      console.error("Error generating recipe:", error);
+                      setError('Failed to generate a recipe. Please try again.');
+                      setIsLoading(false);
+                    }
+                  }}
+                  className="bg-gradient-to-r from-primary-500 to-primary-600 text-white py-3 px-8 rounded-lg font-medium hover:from-primary-600 hover:to-primary-700 transition-all shadow-md"
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  disabled={isLoading}
+                >
+                  <span className="flex items-center justify-center gap-2">
+                    <FaUtensils />
+                    <span>Generate New Recipe</span>
+                  </span>
+                </motion.button>
+              </motion.div>
             </div>
           </motion.div>
         )}
-        
-        
+
+
         {/* No additional content on initial state */}
       </div>
     </div>

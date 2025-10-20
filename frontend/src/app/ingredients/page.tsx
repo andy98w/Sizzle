@@ -76,26 +76,38 @@ type Ingredient = {
 
 // Component to handle image display with error handling
 const IngredientImage = ({ imageUrl, name }: { imageUrl: string, name: string }) => {
+  const [imageSrc, setImageSrc] = React.useState(imageUrl);
+  const [showPlaceholder, setShowPlaceholder] = React.useState(false);
+
   // Remove spaces from URL to prevent breaking Oracle Cloud PAR tokens
-  const cleanedUrl = imageUrl.replace(/\s+/g, '');
-  
+  const cleanedUrl = imageSrc.replace(/\s+/g, '');
+
+  const placeholderUrl = 'http://localhost:8000/static/images/ingredients_clean/placeholder_ingredient.png';
+
   const handleImageError = (e: React.SyntheticEvent<HTMLImageElement, Event>) => {
+    const target = e.target as HTMLImageElement;
+
+    // If we're already showing the placeholder and it failed, give up
+    if (showPlaceholder) {
+      return;
+    }
+
     // Check if this might be an Oracle Cloud URL with the wrong format
     const isOracleUrl = cleanedUrl.includes('objectstorage') && cleanedUrl.includes('oraclecloud.com');
     const hasPPath = cleanedUrl.includes('/p/');
-    
+
     if (isOracleUrl && !hasPPath) {
       try {
         const url = new URL(cleanedUrl);
         const path = url.pathname;
-        
+
         // Check if path contains namespace and bucket identifiers
         if (path.includes('/n/') && path.includes('/b/')) {
           // Extract namespace
           const nIndex = path.indexOf('/n/');
           const bIndex = path.indexOf('/b/');
           const namespace = path.substring(nIndex + 3, bIndex);
-          
+
           // Extract bucket
           const oIndex = path.indexOf('/o/');
           let bucket = "";
@@ -106,33 +118,34 @@ const IngredientImage = ({ imageUrl, name }: { imageUrl: string, name: string })
             const nextSlash = afterB.indexOf('/');
             bucket = nextSlash > 0 ? afterB.substring(0, nextSlash) : afterB;
           }
-          
+
           // Extract object name
           const parts = path.split('/');
           const objectName = parts[parts.length - 1];
-          
+
           // Construct a proper Oracle URL
           const fixedUrl = `${url.protocol}//${url.host}/p/fixed-par-token/n/${namespace}/b/${bucket}/o/${objectName}`;
-          
+
           // Try to load with fixed URL
-          (e.target as HTMLImageElement).src = fixedUrl;
+          setImageSrc(fixedUrl);
           return;
         }
       } catch (err) {
-        // Silently handle errors
+        // Fall through to placeholder
       }
     }
-    
-    // Try direct fetch as fallback
-    fetch(cleanedUrl, { mode: 'no-cors' }).catch(() => {});
+
+    // Use placeholder image
+    setShowPlaceholder(true);
+    target.src = placeholderUrl;
   };
-  
+
   return (
-    <img 
-      src={cleanedUrl}
+    <img
+      src={showPlaceholder ? placeholderUrl : cleanedUrl}
       alt={name}
       className="object-contain absolute inset-0 m-auto max-w-full max-h-full"
-      crossOrigin="anonymous" 
+      crossOrigin="anonymous"
       referrerPolicy="no-referrer"
       onError={handleImageError}
     />
