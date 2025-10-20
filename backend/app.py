@@ -1,42 +1,19 @@
-"""
-Main FastAPI application module for the Sizzle backend.
+"""Main FastAPI application module for the Sizzle backend."""
 
-This module defines the API endpoints and connects all the 
-backend components together.
-"""
-
-# Import from standard library
 import os
-import json
 import time
-import random
-import re
-from typing import List, Optional, Dict, Any, Union
+from typing import List, Optional, Dict, Any
 
-# Import from FastAPI framework
-from fastapi import FastAPI, HTTPException, Depends, Request, Response, status
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-# Import from third-party libraries 
-# Pydantic already imported above
-
-# Import local modules
 import setup_env
-from config import (
-    API_CORS_ORIGINS, API_DEBUG, STATIC_DIR, TEMP_DIR,
-    OPENAI_API_KEY, OCI_BUCKET_NAME
-)
-from utils import (
-    logger, format_api_response, format_error_response, 
-    format_oci_url, log_exception
-)
-from database import (
-    get_database_status, execute_query_dict, 
-    execute_query_dict_single_row
-)
+from config import API_CORS_ORIGINS, API_DEBUG, STATIC_DIR, TEMP_DIR, OPENAI_API_KEY, OCI_BUCKET_NAME
+from utils import logger, format_api_response, format_error_response, format_oci_url, log_exception
+from database import get_database_status, execute_query_dict, execute_query_dict_single_row, supabase_client
 from recipe_assistant import RecipeAssistant
 from oci_storage import OCIObjectStorage
 
@@ -69,9 +46,97 @@ app.add_middleware(
 recipe_assistant = RecipeAssistant()
 oci_storage = OCIObjectStorage()
 
-
 # Mount static files directory
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+# Helper functions
+def enrich_items_with_images(items: List[Dict], item_type: str) -> None:
+    """Fetch and add image URLs to items (ingredients or equipment)."""
+    for item in items:
+        if item.get('name'):
+            try:
+                result = supabase_client.table("generated_images").select("url, prompt").eq("type", item_type).ilike("name", item['name']).limit(1).execute()
+                if result.data and len(result.data) > 0:
+                    item['url'] = format_oci_url(result.data[0].get('url', ''))
+                    item['prompt'] = result.data[0].get('prompt')
+            except Exception as e:
+                logger.warning(f"Could not fetch image for {item_type} '{item['name']}': {str(e)}")
+
+def enrich_recipe_with_full_data(recipe: Dict) -> Dict:
+    """Fetch and add all related data to a recipe."""
+    recipe_id = recipe['id']
+
+    # Get ingredients and equipment
+    ingredients = execute_query_dict("SELECT * FROM recipe_ingredients WHERE recipe_id = %s", (recipe_id,))
+    equipment = execute_query_dict("SELECT * FROM recipe_equipment WHERE recipe_id = %s", (recipe_id,))
+
+    # Enrich with images
+    enrich_items_with_images(ingredients, "ingredient")
+    enrich_items_with_images(equipment, "equipment")
+
+    # Get steps
+    steps = execute_query_dict("SELECT * FROM recipe_steps WHERE recipe_id = %s ORDER BY id", (recipe_id,))
+
+    # For each step, get its ingredients and equipment
+    for step in steps:
+        step_id = step['id']
+        step['ingredients'] = execute_query_dict(
+            "SELECT ri.* FROM step_ingredients si JOIN recipe_ingredients ri ON si.ingredient_id = ri.id WHERE si.step_id = %s",
+            (step_id,)
+        )
+        step['equipment'] = execute_query_dict(
+            "SELECT re.* FROM step_equipment se JOIN recipe_equipment re ON se.equipment_id = re.id WHERE se.step_id = %s",
+            (step_id,)
+        )
+
+        # Format image URLs
+        if step.get('action_image'):
+            step['action_image'] = format_oci_url(step['action_image'])
+        if step.get('step_image'):
+            step['step_image'] = format_oci_url(step['step_image'])
+
+    recipe['ingredients'] = ingredients
+    recipe['equipment'] = equipment
+    recipe['steps'] = steps
+    return recipe
+
+def list_items_with_search(item_type: str, limit: int, offset: int, search: Optional[str]) -> Dict:
+    """Generic function to list ingredients or equipment with search and pagination."""
+    query = supabase_client.table("generated_images").select("*").eq("type", item_type)
+
+    if search:
+        query = query.ilike("name", f"%{search}%")
+
+    query = query.order("id")
+    count_result = query.execute()
+    total_count = len(count_result.data) if count_result.data else 0
+
+    # Fallback search with individual words if no results
+    if search and total_count == 0:
+        for word in search.split():
+            if len(word) >= 3:
+                test_query = supabase_client.table("generated_images").select("id").eq("type", item_type).ilike("name", f"%{word}%")
+                test_result = test_query.execute()
+                if test_result.data and len(test_result.data) > 0:
+                    query = supabase_client.table("generated_images").select("*").eq("type", item_type).ilike("name", f"%{word}%")
+                    total_count = len(test_result.data)
+                    break
+
+    # Apply pagination
+    query_with_pagination = query
+    if limit:
+        query_with_pagination = query_with_pagination.limit(limit)
+    if offset:
+        query_with_pagination = query_with_pagination.range(offset, offset + limit - 1)
+
+    result = query_with_pagination.execute()
+    items = result.data if result.data else []
+
+    for item in items:
+        if item.get('url'):
+            item['url'] = format_oci_url(item['url'])
+
+    return {"items": items, "total": total_count, "limit": limit, "offset": offset}
 
 # Setup request logging middleware
 @app.middleware("http")
@@ -179,87 +244,8 @@ async def parse_recipe(query: RecipeQuery):
 
         if matching_recipes and len(matching_recipes) > 0:
             logger.info(f"Found {len(matching_recipes)} matching recipes in database for query: {query.query}")
-
-            # For each matching recipe, fetch full details with image URLs
-            from database import supabase_client
-            enriched_recipes = []
-
-            for recipe in matching_recipes:
-                recipe_id = recipe['id']
-
-                # Get ingredients for the recipe
-                ingredients_query = "SELECT * FROM recipe_ingredients WHERE recipe_id = %s"
-                ingredients = execute_query_dict(ingredients_query, (recipe_id,))
-
-                # Get equipment for the recipe
-                equipment_query = "SELECT * FROM recipe_equipment WHERE recipe_id = %s"
-                equipment = execute_query_dict(equipment_query, (recipe_id,))
-
-                # Fetch image URLs from generated_images table for ingredients
-                for ingredient in ingredients:
-                    if ingredient.get('name'):
-                        try:
-                            # Query generated_images for this ingredient
-                            img_result = supabase_client.table("generated_images").select("url, prompt").eq("type", "ingredient").ilike("name", ingredient['name']).limit(1).execute()
-                            if img_result.data and len(img_result.data) > 0:
-                                ingredient['url'] = format_oci_url(img_result.data[0].get('url', ''))
-                                ingredient['prompt'] = img_result.data[0].get('prompt')
-                        except Exception as e:
-                            logger.warning(f"Could not fetch image for ingredient '{ingredient['name']}': {str(e)}")
-
-                # Fetch image URLs from generated_images table for equipment
-                for equip in equipment:
-                    if equip.get('name'):
-                        try:
-                            # Query generated_images for this equipment
-                            img_result = supabase_client.table("generated_images").select("url, prompt").eq("type", "equipment").ilike("name", equip['name']).limit(1).execute()
-                            if img_result.data and len(img_result.data) > 0:
-                                equip['url'] = format_oci_url(img_result.data[0].get('url', ''))
-                                equip['prompt'] = img_result.data[0].get('prompt')
-                        except Exception as e:
-                            logger.warning(f"Could not fetch image for equipment '{equip['name']}': {str(e)}")
-
-                # Get steps for the recipe
-                steps_query = "SELECT * FROM recipe_steps WHERE recipe_id = %s ORDER BY id"
-                steps = execute_query_dict(steps_query, (recipe_id,))
-
-                # For each step, get its ingredients and equipment
-                for step in steps:
-                    step_id = step['id']
-
-                    # Get step ingredients
-                    step_ingredients_query = """
-                        SELECT ri.* FROM step_ingredients si
-                        JOIN recipe_ingredients ri ON si.ingredient_id = ri.id
-                        WHERE si.step_id = %s
-                    """
-                    step['ingredients'] = execute_query_dict(step_ingredients_query, (step_id,))
-
-                    # Get step equipment
-                    step_equipment_query = """
-                        SELECT re.* FROM step_equipment se
-                        JOIN recipe_equipment re ON se.equipment_id = re.id
-                        WHERE se.step_id = %s
-                    """
-                    step['equipment'] = execute_query_dict(step_equipment_query, (step_id,))
-
-                    # Ensure image URLs are properly formatted
-                    if step.get('action_image'):
-                        step['action_image'] = format_oci_url(step['action_image'])
-                    if step.get('step_image'):
-                        step['step_image'] = format_oci_url(step['step_image'])
-
-                # Add the related data to the recipe
-                recipe['ingredients'] = ingredients
-                recipe['equipment'] = equipment
-                recipe['steps'] = steps
-
-                enriched_recipes.append(recipe)
-
-            # Return the enriched recipes
-            return format_api_response({
-                "matching_recipes": enriched_recipes
-            })
+            enriched_recipes = [enrich_recipe_with_full_data(recipe) for recipe in matching_recipes]
+            return format_api_response({"matching_recipes": enriched_recipes})
 
         # If no matching recipes found, generate a new one
         logger.info(f"No matching recipes found in database, generating new recipe for: {query.query}")
@@ -334,313 +320,71 @@ async def list_recipes(
 async def get_recipe(recipe_id: int):
     """Get a recipe by ID with all related data."""
     try:
-        # Get the recipe
-        recipe_query = "SELECT * FROM recipes WHERE id = %s"
-        recipe = execute_query_dict_single_row(recipe_query, (recipe_id,))
-        
+        recipe = execute_query_dict_single_row("SELECT * FROM recipes WHERE id = %s", (recipe_id,))
         if not recipe:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Recipe with ID {recipe_id} not found"
-            )
-            
-        # Get ingredients for the recipe
-        ingredients_query = "SELECT * FROM recipe_ingredients WHERE recipe_id = %s"
-        ingredients = execute_query_dict(ingredients_query, (recipe_id,))
-
-        # Get equipment for the recipe
-        equipment_query = "SELECT * FROM recipe_equipment WHERE recipe_id = %s"
-        equipment = execute_query_dict(equipment_query, (recipe_id,))
-
-        # Fetch image URLs from generated_images table for ingredients
-        from database import supabase_client
-        for ingredient in ingredients:
-            if ingredient.get('name'):
-                try:
-                    # Query generated_images for this ingredient
-                    img_result = supabase_client.table("generated_images").select("url, prompt").eq("type", "ingredient").ilike("name", ingredient['name']).limit(1).execute()
-                    if img_result.data and len(img_result.data) > 0:
-                        ingredient['url'] = format_oci_url(img_result.data[0].get('url', ''))
-                        ingredient['prompt'] = img_result.data[0].get('prompt')
-                except Exception as e:
-                    logger.warning(f"Could not fetch image for ingredient '{ingredient['name']}': {str(e)}")
-
-        # Fetch image URLs from generated_images table for equipment
-        for equip in equipment:
-            if equip.get('name'):
-                try:
-                    # Query generated_images for this equipment
-                    img_result = supabase_client.table("generated_images").select("url, prompt").eq("type", "equipment").ilike("name", equip['name']).limit(1).execute()
-                    if img_result.data and len(img_result.data) > 0:
-                        equip['url'] = format_oci_url(img_result.data[0].get('url', ''))
-                        equip['prompt'] = img_result.data[0].get('prompt')
-                except Exception as e:
-                    logger.warning(f"Could not fetch image for equipment '{equip['name']}': {str(e)}")
-        
-        # Get steps for the recipe
-        steps_query = "SELECT * FROM recipe_steps WHERE recipe_id = %s ORDER BY id"
-        steps = execute_query_dict(steps_query, (recipe_id,))
-        
-        # For each step, get its ingredients and equipment
-        for step in steps:
-            step_id = step['id']
-            
-            # Get step ingredients
-            step_ingredients_query = """
-                SELECT ri.* FROM step_ingredients si
-                JOIN recipe_ingredients ri ON si.ingredient_id = ri.id
-                WHERE si.step_id = %s
-            """
-            step['ingredients'] = execute_query_dict(step_ingredients_query, (step_id,))
-            
-            # Get step equipment
-            step_equipment_query = """
-                SELECT re.* FROM step_equipment se
-                JOIN recipe_equipment re ON se.equipment_id = re.id
-                WHERE se.step_id = %s
-            """
-            step['equipment'] = execute_query_dict(step_equipment_query, (step_id,))
-            
-            # Ensure image URLs are properly formatted
-            if step.get('action_image'):
-                step['action_image'] = format_oci_url(step['action_image'])
-            if step.get('step_image'):
-                step['step_image'] = format_oci_url(step['step_image'])
-        
-        # Add the related data to the recipe
-        recipe['ingredients'] = ingredients
-        recipe['equipment'] = equipment
-        recipe['steps'] = steps
-        
-        return format_api_response(recipe)
+            raise HTTPException(status_code=404, detail=f"Recipe with ID {recipe_id} not found")
+        return format_api_response(enrich_recipe_with_full_data(recipe))
     except HTTPException:
         raise
     except Exception as e:
         log_exception(e, f"Error getting recipe {recipe_id}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to get recipe: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to get recipe: {str(e)}")
 
 # Ingredients endpoints
 @app.get("/ingredients")
-async def list_ingredients(
-    limit: int = 10, 
-    offset: int = 0,
-    search: Optional[str] = None
-):
+async def list_ingredients(limit: int = 10, offset: int = 0, search: Optional[str] = None):
     """List ingredients with optional search and pagination."""
     try:
-        # Use supabase client directly
-        from database import supabase_client
-        
-        # Create query on generated_images table with type=ingredient
-        query = supabase_client.table("generated_images").select("*").eq("type", "ingredient")
-        
-        # Add search filter if provided - use case-insensitive search
-        if search:
-            # Make the search case-insensitive
-            query = query.ilike("name", f"%{search}%")
-            logger.info(f"Adding search filter: '{search}'")
-        
-        # For ordering by ID instead of name
-        query = query.order("id")
-        
-        # Get total count for this query (with any search filters)
-        count_result = query.execute()
-        total_count = len(count_result.data) if count_result.data else 0
-        logger.info(f"Total count: {total_count}" + (f" with search filter '{search}'" if search else ""))
-        
-        # If search is active and no results, try a more flexible search
-        if search and total_count == 0:
-            # Try with each word in the search query
-            search_words = search.split()
-            logger.info(f"No results with exact search, trying with individual words: {search_words}")
-            
-            # Try each word individually
-            for word in search_words:
-                if len(word) >= 3:  # Only use words with at least 3 characters
-                    test_query = supabase_client.table("generated_images").select("id").eq("type", "ingredient").ilike("name", f"%{word}%")
-                    test_result = test_query.execute()
-                    if test_result.data and len(test_result.data) > 0:
-                        logger.info(f"Found {len(test_result.data)} results with word '{word}'")
-                        # Use this word for the actual query
-                        query = supabase_client.table("generated_images").select("*").eq("type", "ingredient").ilike("name", f"%{word}%")
-                        total_count = len(test_result.data)
-                        break
-        
-        # Add pagination to the query
-        query_with_pagination = query
-        
-        if limit:
-            query_with_pagination = query_with_pagination.limit(limit)
-        if offset:
-            end_range = offset + limit - 1
-            query_with_pagination = query_with_pagination.range(offset, end_range)
-            
-        # Execute the query
-        result = query_with_pagination.execute()
-        ingredients = result.data if result.data else []
-        
-        # Format URLs if needed
-        for ingredient in ingredients:
-            if ingredient.get('url'):
-                ingredient['url'] = format_oci_url(ingredient['url'])
-        
-        return format_api_response({
-            "ingredients": ingredients,
-            "total": total_count,
-            "limit": limit,
-            "offset": offset
-        })
-            
+        result = list_items_with_search("ingredient", limit, offset, search)
+        return format_api_response({"ingredients": result["items"], "total": result["total"], "limit": limit, "offset": offset})
     except Exception as e:
         log_exception(e, "Error listing ingredients")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to list ingredients: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to list ingredients: {str(e)}")
 
 @app.get("/ingredients/{ingredient_id}")
 async def get_ingredient(ingredient_id: int):
     """Get an ingredient by ID."""
     try:
-        from database import supabase_client
-
-        # Get ingredient by ID from generated_images table with type=ingredient
         result = supabase_client.table("generated_images").select("*").eq("id", ingredient_id).eq("type", "ingredient").execute()
-
         if not result.data or len(result.data) == 0:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Ingredient with ID {ingredient_id} not found"
-            )
-
+            raise HTTPException(status_code=404, detail=f"Ingredient with ID {ingredient_id} not found")
         ingredient = result.data[0]
-
-        # Format URL if needed
         if ingredient.get('url'):
             ingredient['url'] = format_oci_url(ingredient['url'])
-
         return format_api_response(ingredient)
     except HTTPException:
         raise
     except Exception as e:
         log_exception(e, f"Error getting ingredient {ingredient_id}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to get ingredient: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to get ingredient: {str(e)}")
 
 # Equipment endpoints
 @app.get("/equipment")
-async def list_equipment(
-    limit: int = 10,
-    offset: int = 0,
-    search: Optional[str] = None
-):
+async def list_equipment(limit: int = 10, offset: int = 0, search: Optional[str] = None):
     """List equipment with optional search and pagination."""
     try:
-        # Use supabase client directly
-        from database import supabase_client
-
-        # Create query on generated_images table with type=equipment
-        query = supabase_client.table("generated_images").select("*").eq("type", "equipment")
-
-        # Add search filter if provided - use case-insensitive search
-        if search:
-            # Make the search case-insensitive
-            query = query.ilike("name", f"%{search}%")
-            logger.info(f"Adding search filter: '{search}'")
-
-        # For ordering by ID instead of name
-        query = query.order("id")
-
-        # Get total count for this query (with any search filters)
-        count_result = query.execute()
-        total_count = len(count_result.data) if count_result.data else 0
-        logger.info(f"Total equipment count: {total_count}" + (f" with search filter '{search}'" if search else ""))
-
-        # If search is active and no results, try a more flexible search
-        if search and total_count == 0:
-            # Try with each word in the search query
-            search_words = search.split()
-            logger.info(f"No results with exact search, trying with individual words: {search_words}")
-
-            # Try each word individually
-            for word in search_words:
-                if len(word) >= 3:  # Only use words with at least 3 characters
-                    test_query = supabase_client.table("generated_images").select("id").eq("type", "equipment").ilike("name", f"%{word}%")
-                    test_result = test_query.execute()
-                    if test_result.data and len(test_result.data) > 0:
-                        logger.info(f"Found {len(test_result.data)} results with word '{word}'")
-                        # Use this word for the actual query
-                        query = supabase_client.table("generated_images").select("*").eq("type", "equipment").ilike("name", f"%{word}%")
-                        total_count = len(test_result.data)
-                        break
-
-        # Add pagination to the query
-        query_with_pagination = query
-
-        if limit:
-            query_with_pagination = query_with_pagination.limit(limit)
-        if offset:
-            end_range = offset + limit - 1
-            query_with_pagination = query_with_pagination.range(offset, end_range)
-
-        # Execute the query
-        result = query_with_pagination.execute()
-        equipment_items = result.data if result.data else []
-
-        # Format URLs if needed
-        for equipment_item in equipment_items:
-            if equipment_item.get('url'):
-                equipment_item['url'] = format_oci_url(equipment_item['url'])
-
-        return format_api_response({
-            "equipment": equipment_items,
-            "total": total_count,
-            "limit": limit,
-            "offset": offset
-        })
-
+        result = list_items_with_search("equipment", limit, offset, search)
+        return format_api_response({"equipment": result["items"], "total": result["total"], "limit": limit, "offset": offset})
     except Exception as e:
         log_exception(e, "Error listing equipment")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to list equipment: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to list equipment: {str(e)}")
 
 @app.get("/equipment/{equipment_id}")
 async def get_equipment(equipment_id: int):
     """Get an equipment item by ID."""
     try:
-        from database import supabase_client
-
-        # Get equipment by ID from generated_images table with type=equipment
         result = supabase_client.table("generated_images").select("*").eq("id", equipment_id).eq("type", "equipment").execute()
-
         if not result.data or len(result.data) == 0:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Equipment with ID {equipment_id} not found"
-            )
-
+            raise HTTPException(status_code=404, detail=f"Equipment with ID {equipment_id} not found")
         equipment_item = result.data[0]
-
-        # Format URL if needed
         if equipment_item.get('url'):
             equipment_item['url'] = format_oci_url(equipment_item['url'])
-
         return format_api_response(equipment_item)
     except HTTPException:
         raise
     except Exception as e:
         log_exception(e, f"Error getting equipment {equipment_id}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to get equipment: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to get equipment: {str(e)}")
 
 # Main entry point
 if __name__ == "__main__":

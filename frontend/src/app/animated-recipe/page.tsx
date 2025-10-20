@@ -52,11 +52,8 @@ export default function AnimatedRecipePage() {
     
     try {
       const response = await axios.post(`${API_URL}/recipe/parse`, { query });
-      console.log("API response:", response.data);
 
       try {
-        // Check if the response has matching_recipes array
-        // The API returns { status, status_code, data: { matching_recipes: [...] } }
         const responseData = response.data.data || response.data;
         if (responseData.matching_recipes && Array.isArray(responseData.matching_recipes)) {
           const recipes = responseData.matching_recipes;
@@ -68,23 +65,13 @@ export default function AnimatedRecipePage() {
 
           setMatchingRecipes(recipes);
 
-          // If there's only one recipe, select it automatically and show slideshow
           if (recipes.length === 1) {
-            console.log("Raw recipe from API:", recipes[0]);
             const formattedRecipe = formatRecipe(recipes[0]);
-            console.log("Formatted recipe:", formattedRecipe);
-            console.log("Formatted recipe ingredients:", formattedRecipe.ingredients);
             setSelectedRecipe(formattedRecipe);
-            // Always show slideshow for single recipes
             setTimeout(() => setShowSlideshow(true), 50);
           } else if (recipes.length > 0) {
-            // If there are multiple recipes, still select the first one but don't show slideshow yet
-            console.log("Raw recipe from API:", recipes[0]);
             const formattedRecipe = formatRecipe(recipes[0]);
-            console.log("Formatted recipe:", formattedRecipe);
-            console.log("Formatted recipe ingredients:", formattedRecipe.ingredients);
             setSelectedRecipe(formattedRecipe);
-            // Don't show slideshow yet for multiple recipes
           }
         } else if (response.data && (response.data.title || response.data.steps)) {
           // Legacy format - single recipe
@@ -93,47 +80,28 @@ export default function AnimatedRecipePage() {
           // Always show slideshow for single recipes
           setTimeout(() => setShowSlideshow(true), 50);
         } else {
-          // No existing recipe found, let's generate one
-          console.log("No matching recipes found, will attempt to generate a new recipe");
           try {
-            // Update loading state with a message about generation
             setIsLoading(true);
             setError(null);
 
-            // Create a dedicated loading message element instead of modifying existing ones
             const loadingEl = document.getElementById('generation-loading-message');
             if (loadingEl) {
               loadingEl.textContent = 'Generating a new recipe for you...';
             }
 
-            // Use the existing /recipe/parse endpoint since /recipe/generate doesn't exist
-            const generationResponse = await axios.post(`${API_URL}/recipe/parse`, {
-              query: query
-            });
-
-            console.log("Generation response:", generationResponse.data);
+            const generationResponse = await axios.post(`${API_URL}/recipe/parse`, { query });
 
             if (generationResponse.data && generationResponse.data.matching_recipes && generationResponse.data.matching_recipes.length > 0) {
-              // Successfully got recipe(s) from API
               const recipes = generationResponse.data.matching_recipes;
-              console.log("Got matching recipes:", recipes.length);
-
-              // Select the first recipe
               const recipe = recipes[0];
               const formattedRecipe = formatRecipe(recipe);
 
-              // Now save the generated recipe to the database if it doesn't already have an ID
               if (!formattedRecipe.id) {
                 try {
-                  // Save the recipe to appear in My Recipes
                   const saveResponse = await axios.post(`${API_URL}/recipes`, formattedRecipe);
-                  console.log("Recipe saved with ID:", saveResponse.data.id);
-
-                  // Update recipe with the assigned ID
                   formattedRecipe.id = saveResponse.data.id;
                 } catch (saveError) {
                   console.error("Error saving generated recipe:", saveError);
-                  // Continue even if save fails - we can still display the recipe
                 }
               }
 

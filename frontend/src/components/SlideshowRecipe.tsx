@@ -34,16 +34,12 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
   // Preload only the images needed for THIS recipe
   useEffect(() => {
     const preloadAllImages = async () => {
-      console.log('🖼️ Starting to preload images for recipe slideshow...');
-
       try {
         const imagesToPreload: string[] = [];
 
         // Collect ingredient images from recipe
         if (recipe.ingredients) {
-          console.log('📋 Recipe ingredients:', recipe.ingredients);
           recipe.ingredients.forEach((ingredient: any) => {
-            console.log(`  - ${ingredient.name}: url="${ingredient.url}", imageUrl="${ingredient.imageUrl}"`);
             if (ingredient.url || ingredient.imageUrl) {
               imagesToPreload.push(ingredient.url || ingredient.imageUrl);
             }
@@ -52,9 +48,7 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
 
         // Collect equipment images from recipe
         if (recipe.equipment) {
-          console.log('🔧 Recipe equipment:', recipe.equipment);
           recipe.equipment.forEach((equipment: any) => {
-            console.log(`  - ${equipment.name}: url="${equipment.url}", imageUrl="${equipment.imageUrl}"`);
             if (equipment.url || equipment.imageUrl) {
               imagesToPreload.push(equipment.url || equipment.imageUrl);
             }
@@ -83,10 +77,8 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
 
         // Remove duplicates
         const uniqueImages = [...new Set(imagesToPreload)].filter(url => url);
-        console.log(`📦 Found ${uniqueImages.length} unique images to preload for this recipe`);
 
         if (uniqueImages.length === 0) {
-          // No images to load
           setAllImagesLoaded(true);
           setLoadingProgress(100);
           return;
@@ -124,15 +116,10 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
 
           // Wait for this batch to complete before starting the next
           await Promise.all(batchPromises);
-
-          console.log(`✅ Loaded batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(uniqueImages.length / BATCH_SIZE)}`);
         }
 
-        console.log('✨ All images preloaded!');
         setAllImagesLoaded(true);
       } catch (error) {
-        console.error('❌ Error preloading images:', error);
-        // Still allow slideshow to show even if preloading fails
         setAllImagesLoaded(true);
         setLoadingProgress(100);
       }

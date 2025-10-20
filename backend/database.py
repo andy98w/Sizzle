@@ -1,17 +1,7 @@
-"""
-Database connection management module for the Sizzle application.
+"""Database connection management module for the Sizzle application."""
 
-This module provides a simplified interface for database operations using 
-Supabase, with fallback to sample data if not available.
-"""
+from typing import Dict, List, Optional, Any, Tuple
 
-import os
-import time
-import contextlib
-from typing import Dict, List, Optional, Any, Generator, Tuple
-import json
-
-# Local imports
 from config import SUPABASE_URL, SUPABASE_KEY
 from utils import logger, log_exception
 
@@ -150,34 +140,29 @@ SAMPLE_RECIPES = {
     }
 }
 
-# Supabase client
 supabase_client = None
 supabase_available = False
 
 def initialize_supabase():
-    """Initialize Supabase client"""
+    """Initialize Supabase client."""
     global supabase_client, supabase_available
-    
+
     if not SUPABASE_URL or not SUPABASE_KEY:
         logger.warning("Supabase credentials not found. Using sample data.")
         return False
-        
+
     try:
         from supabase import create_client
         supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
         logger.info(f"Connected to Supabase at {SUPABASE_URL}")
-        
-        # Test connection
         test = supabase_client.table("recipes").select("id").limit(1).execute()
         logger.info("Supabase connection successful!")
         supabase_available = True
         return True
     except Exception as e:
         logger.error(f"Error connecting to Supabase: {str(e)}")
-        logger.info("Using sample data instead.")
         return False
 
-# Try to initialize Supabase
 try:
     initialize_supabase()
 except ImportError:
@@ -185,137 +170,90 @@ except ImportError:
     supabase_available = False
 
 def execute_query(query: str, params: Optional[Tuple] = None) -> List[Tuple]:
-    """
-    Executes a database query and returns results as tuples.
-    
-    Args:
-        query: SQL query string
-        params: Query parameters
-        
-    Returns:
-        List of tuples representing result rows
-    """
+    """Executes a database query and returns results as tuples."""
     if not supabase_available or not supabase_client:
-        logger.warning(f"Database not available. Query was: {query}")
         return []
-        
+
     try:
-        # For simple SELECT queries, use Supabase client
         if 'SELECT' in query.upper():
-            # Extract table name
             try:
-                table_name = query.upper().split('FROM')[1].strip().split()[0].strip('"')
-                table_name = table_name.lower()
-                
-                # Basic parameter parsing
-                limit = 100  # Default limit
-                offset = 0   # Default offset
-                
+                table_name = query.upper().split('FROM')[1].strip().split()[0].strip('"').lower()
+                limit = 100
+                offset = 0
+
                 if 'LIMIT' in query.upper():
                     try:
                         limit_part = query.upper().split('LIMIT')[1].strip()
-                        if 'OFFSET' in limit_part:
-                            limit = int(limit_part.split('OFFSET')[0].strip())
-                        else:
-                            limit = int(limit_part)
+                        limit = int(limit_part.split('OFFSET')[0].strip()) if 'OFFSET' in limit_part else int(limit_part)
                     except:
                         pass
-                
+
                 if 'OFFSET' in query.upper():
                     try:
                         offset = int(query.upper().split('OFFSET')[1].strip())
                     except:
                         pass
-                
-                # Use supabase client to fetch data
+
                 supabase_query = supabase_client.table(table_name).select('*')
-                
                 if limit:
                     supabase_query = supabase_query.limit(limit)
                 if offset:
-                    range_end = offset + limit - 1
-                    supabase_query = supabase_query.range(offset, range_end)
-                
+                    supabase_query = supabase_query.range(offset, offset + limit - 1)
+
                 result = supabase_query.execute()
-                
+
                 if 'COUNT(*)' in query.upper():
-                    # Handle count queries specially
                     return [(len(result.data),)]
-                
-                # Convert to tuples
+
                 return [(row,) for row in result.data] if result.data else []
             except Exception as e:
                 logger.error(f"Error parsing or executing SELECT: {str(e)}")
                 return []
         else:
-            # For now, just return empty results for non-SELECT queries
             return []
-                
+
     except Exception as e:
         logger.error(f"Error executing query: {str(e)}")
-        logger.error(f"Query was: {query}")
-        if params:
-            logger.error(f"Params were: {params}")
         return []
 
 def execute_query_dict(query: str, params: Optional[Tuple] = None) -> List[Dict]:
-    """
-    Executes a database query and returns results as dictionaries.
-    
-    Args:
-        query: SQL query string
-        params: Query parameters
-        
-    Returns:
-        List of dictionaries representing result rows
-    """
+    """Executes a database query and returns results as dictionaries."""
     if not supabase_available:
-        # Just return an empty list if Supabase is not available
         return []
-    
+
     try:
-        # Simply extract table name and use Supabase directly
         if "FROM" in query.upper():
             table_name = query.upper().split("FROM")[1].strip().split()[0].strip('"').lower()
-            
-            # Handle COUNT queries
+
             if "COUNT(*)" in query.upper():
-                # Just do a select and count the results
                 result = supabase_client.table(table_name).select('id').execute()
                 return [{"count": len(result.data) if result.data else 0}]
-            
-            # Basic parameter parsing
-            limit = 100  # Default limit
-            offset = 0   # Default offset
-            
+
+            limit = 100
+            offset = 0
+
             if "LIMIT" in query.upper():
                 try:
                     limit_part = query.upper().split("LIMIT")[1].strip()
-                    if "OFFSET" in limit_part:
-                        limit = int(limit_part.split("OFFSET")[0].strip())
-                    else:
-                        limit = int(limit_part)
+                    limit = int(limit_part.split("OFFSET")[0].strip()) if "OFFSET" in limit_part else int(limit_part)
                 except:
                     pass
-                    
+
             if "OFFSET" in query.upper():
                 try:
                     offset = int(query.upper().split("OFFSET")[1].strip())
                 except:
                     pass
-            
-            # Handle WHERE clauses
+
             where_conditions = []
             if "WHERE" in query.upper():
-                where_clause = query.split("WHERE")[1].strip()  # Use original case for column names
+                where_clause = query.split("WHERE")[1].strip()
                 if "LIMIT" in where_clause.upper():
                     where_clause = where_clause.split("LIMIT")[0].strip()
                 if "ORDER" in where_clause.upper():
                     where_clause = where_clause.split("ORDER")[0].strip()
 
-                # Handle simple equals conditions with %s placeholders
                 if "=" in where_clause and params:
-                    # Split by AND to handle multiple conditions
                     conditions = where_clause.split("AND")
                     param_index = 0
 
@@ -327,44 +265,33 @@ def execute_query_dict(query: str, params: Optional[Tuple] = None) -> List[Dict]
                                 col_name = parts[0].strip().lower()
                                 val_placeholder = parts[1].strip()
 
-                                # If using %s placeholder, get value from params
                                 if "%s" in val_placeholder and param_index < len(params):
                                     val = params[param_index]
                                     param_index += 1
                                 else:
-                                    # Try to parse literal value
                                     val = val_placeholder
-                                    # Remove quotes
                                     if val.startswith("'") and val.endswith("'"):
                                         val = val[1:-1]
 
                                 where_conditions.append((col_name, val))
-            
-            # Construct and execute the query
+
             supabase_query = supabase_client.table(table_name).select('*')
 
-            # Apply WHERE conditions if present
             for col_name, val in where_conditions:
                 supabase_query = supabase_query.eq(col_name, val)
-            
-            # Apply LIMIT and OFFSET
+
             if limit:
                 supabase_query = supabase_query.limit(limit)
             if offset:
-                # In Supabase, range is inclusive
-                end_range = offset + limit - 1
-                supabase_query = supabase_query.range(offset, end_range)
-            
-            # Execute and return
+                supabase_query = supabase_query.range(offset, offset + limit - 1)
+
             result = supabase_query.execute()
             return result.data if result.data else []
-            
-        # If we couldn't parse the query, return empty result
+
         return []
-        
+
     except Exception as e:
         logger.error(f"Error executing dictionary query: {str(e)}")
-        # Use sample data as fallback
         if "ingredients" in query.lower():
             return [
                 {"id": 1, "name": "Salt", "url": "/static/images/ingredients/salt.png", "prompt": "2D flat icon of cooking salt, emoji style"},
@@ -377,26 +304,12 @@ def execute_query_dict(query: str, params: Optional[Tuple] = None) -> List[Dict]
             return []
 
 def execute_query_dict_single_row(query: str, params: Optional[Tuple] = None) -> Optional[Dict]:
-    """
-    Executes a database query and returns the first row as a dictionary or None.
-    
-    Args:
-        query: SQL query string
-        params: Query parameters
-        
-    Returns:
-        Dictionary representing first result row or None
-    """
+    """Executes a database query and returns the first row as a dictionary or None."""
     results = execute_query_dict(query, params)
     return results[0] if results else None
 
 def get_database_status() -> Dict[str, Any]:
-    """
-    Checks the status of the database connection.
-    
-    Returns:
-        A dictionary with database status information
-    """
+    """Checks the status of the database connection."""
     if supabase_available and supabase_client:
         return {
             "status": "connected",
