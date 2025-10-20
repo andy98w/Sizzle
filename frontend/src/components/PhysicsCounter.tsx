@@ -75,20 +75,25 @@ interface Item {
 }
 
 interface PhysicsCounterProps {
-  ingredients: { name: string }[];
-  equipment: { name: string }[];
+  ingredients: { name: string; url?: string; imageUrl?: string }[];
+  equipment: { name: string; url?: string; imageUrl?: string }[];
   onSlideChange?: (direction?: 1 | -1) => void;
+  isVisible?: boolean;
+  useAllItems?: boolean; // If true, fetch and display ALL items from database instead of just recipe items
 }
 
-const PhysicsCounter = React.forwardRef<{ 
-  exitAnimation: (direction?: 1 | -1) => void, 
-  exitAnimationNext: () => void, 
-  exitAnimationPrev: () => void 
-}, PhysicsCounterProps>(({ ingredients, equipment, onSlideChange }, ref) => {
+const PhysicsCounter = React.forwardRef<{
+  exitAnimation: (direction?: 1 | -1) => void,
+  exitAnimationNext: () => void,
+  exitAnimationPrev: () => void
+}, PhysicsCounterProps>(({ ingredients, equipment, onSlideChange, isVisible = true, useAllItems = false }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   const [isLoading, setIsLoading] = useState(true);
-  
+  const hasInitializedRef = useRef(false);
+  const [imagesLoaded, setImagesLoaded] = useState(0);
+  const totalImages = useRef(0);
+
   // Use state to track the floor position (counter top)
   const [floorY, setFloorY] = useState(0);
   
@@ -148,6 +153,7 @@ const PhysicsCounter = React.forwardRef<{
     };
   }, []);
 
+
   // Items state with all necessary properties
   const [items, setItems] = useState<Item[]>([]);
   
@@ -160,25 +166,90 @@ const PhysicsCounter = React.forwardRef<{
   const handleImageError = (id: string) => {
     // Log the error for debugging
     console.log(`Image loading error for item: ${id}`);
-    
-    setItems(prevItems => 
-      prevItems.map(item => 
+
+    setItems(prevItems =>
+      prevItems.map(item =>
         item.id === id ? { ...item, hasImageError: true } : item
       )
     );
+
+    // Count error as "loaded" so we don't wait forever
+    setImagesLoaded(prev => {
+      const newCount = prev + 1;
+      console.log(`Image error (counted as loaded): ${newCount}/${totalImages.current}`);
+      return newCount;
+    });
   };
+
+  // Handle image load success
+  const handleImageLoad = (id: string) => {
+    console.log(`Image loaded successfully for item: ${id}`);
+
+    setImagesLoaded(prev => {
+      const newCount = prev + 1;
+      console.log(`Image loaded: ${newCount}/${totalImages.current}`);
+      return newCount;
+    });
+  };
+
+  // Check if we should show loading indicator
+  const shouldShowLoading = !isLoading && totalImages.current > 0 && imagesLoaded < totalImages.current;
   
   // Track hover state for showing name
   const [hoveredItem, setHoveredItem] = useState<string | null>(null);
   
   // Animation state for slide transition
-  const [animationState, setAnimationState] = useState<'none' | 'jiggle' | 'swipe'>('none');
-  
+  const [animationState, setAnimationState] = useState<'none' | 'jiggle' | 'swipe' | 'slideIn'>('none');
+
   // Direction of animation (1 = next/right-to-left, -1 = prev/left-to-right)
   const [animationDirection, setAnimationDirection] = useState<1 | -1>(1);
+
+  // Track previous visibility to detect when we're returning to the slide
+  const prevVisibleRef = useRef(isVisible);
+
+  // Track the last exit direction so we can enter from the opposite side
+  const lastExitDirectionRef = useRef<1 | -1 | null>(null);
+
+  // Debug: Log animation state and visibility changes
+  useEffect(() => {
+    console.log('🎬 Animation/Visibility state:', { animationState, animationDirection, isVisible, prevVisible: prevVisibleRef.current });
+
+    // ENTRANCE ANIMATION: When RETURNING to the slide (was hidden, now visible)
+    const wasHidden = !prevVisibleRef.current;
+    const isNowVisible = isVisible;
+
+    if (wasHidden && isNowVisible) {
+      // If we have a last exit direction, play entrance animation from opposite side
+      if (lastExitDirectionRef.current !== null) {
+        console.log('🎬 Playing entrance animation from direction:', lastExitDirectionRef.current);
+        // Use the OPPOSITE direction for entrance
+        // If we exited with direction 1 (went right, items went left), enter from left (direction -1)
+        // If we exited with direction -1 (went left, items went right), enter from right (direction 1)
+        const entranceDirection = lastExitDirectionRef.current === 1 ? -1 : 1;
+        setAnimationState('slideIn');
+        setAnimationDirection(entranceDirection);
+
+        // Reset animation after it completes
+        setTimeout(() => {
+          setAnimationState('none');
+        }, 800); // Match animation duration
+      } else {
+        // No previous exit, just reset
+        console.log('🔄 Resetting animation state (no previous exit)');
+        setAnimationState('none');
+      }
+    }
+
+    // Update the previous visibility
+    prevVisibleRef.current = isVisible;
+  }, [animationState, animationDirection, isVisible]);
   
   // Function to start the exit animation sequence
   const startExitAnimation = (direction: 1 | -1 = 1) => {
+    // Save the exit direction so we can enter from the same side later
+    lastExitDirectionRef.current = direction;
+    console.log('💾 Saved exit direction:', direction);
+
     // Reset animation state
     setAnimationState('none');
     // Set the animation direction
@@ -219,26 +290,72 @@ const PhysicsCounter = React.forwardRef<{
   
   // Initialize items on mount
   useEffect(() => {
+    console.log('=== Initialization effect triggered ===', {
+      hasInitialized: hasInitializedRef.current,
+      isVisible,
+      containerWidth: containerSize.width,
+      floorY,
+      itemsCount: items.length
+    });
+
+    // Only initialize once
+    if (hasInitializedRef.current) {
+      console.log('Already initialized, skipping. Current items:', items.length);
+      return;
+    }
+
+    // Don't initialize items if not visible yet
+    if (!isVisible) {
+      console.log('PhysicsCounter not visible, skipping initialization');
+      return;
+    }
+
     // Don't initialize if no container width or if floor position isn't ready
-    if (!containerRef.current || containerSize.width === 0 || floorY <= 0) return;
-    
+    if (!containerRef.current || containerSize.width === 0 || floorY <= 0) {
+      console.log('Container not ready:', { containerRef: !!containerRef.current, width: containerSize.width, floorY });
+      return;
+    }
+
+    // Always use items from recipe props (not all from database)
+    const ingredientsToUse = ingredients;
+    const equipmentToUse = equipment;
+
     console.log('Initializing physics items with floor position:', floorY);
-    
+    console.log('Using items from recipe:', {
+      ingredients: ingredientsToUse.length,
+      equipment: equipmentToUse.length
+    });
+
+    // Mark as initialized
+    hasInitializedRef.current = true;
+
     const allItems: Item[] = [];
-    
+    let totalImageCount = 0;
+
     // Add ingredients
-    ingredients.forEach((ingredient, i) => {
-      const x = 50 + ((i % 5) * containerSize.width) / 6;
+    // Calculate items per row based on container width (allow ~100px per item)
+    const itemsPerRow = Math.max(3, Math.floor(containerSize.width / 100));
+
+    ingredientsToUse.forEach((ingredient, i) => {
+      const col = i % itemsPerRow;
+      const row = Math.floor(i / itemsPerRow);
+      const spacing = containerSize.width / (itemsPerRow + 1);
+      const x = spacing * (col + 1);
       // Start items higher above the floor for a more dramatic fall
-      const y = -100 - (30 * Math.floor(i / 5));
-      
-      // Try to get the image URL for the ingredient
-      const ingredientName = ingredient.name.toLowerCase().trim();
-      // Direct URL to static folder images (not through API) for ingredient images
-      const imageUrl = ingredient.name.toLowerCase() === 'salt' 
-        ? 'http://localhost:8000/static/images/ingredients/salt.png'
-        : null;
-      
+      // Stagger rows more to prevent overlapping
+      const y = -100 - (40 * row);
+
+      // Use the URL that comes directly with the ingredient from the recipe
+      // Default to placeholder if no image found
+      const imageUrl = ingredient.url || ingredient.imageUrl || 'https://objectstorage.ca-toronto-1.oraclecloud.com/p/LHruGKILbQNvy2_V89soZbDGmCXZ-RecXxEAAzoKdZx1y9Tcuz0J-gEmWtIcNZhJ/n/yzep9haqilyk/b/SizzleGeneratedImages/o/placeholder_ingredient.png';
+
+      if (imageUrl) totalImageCount++;
+
+      console.log(`Adding ingredient "${ingredient.name}":`, {
+        hasUrl: !!ingredient.url,
+        url: imageUrl?.substring(0, 80) + '...'
+      });
+
       allItems.push({
         id: `ingredient-${i}`,
         name: ingredient.name,
@@ -253,17 +370,24 @@ const PhysicsCounter = React.forwardRef<{
         hasImageError: false
       });
     });
-    
+
     // Add equipment
-    equipment.forEach((equip, i) => {
-      const x = containerSize.width - 50 - ((i % 5) * containerSize.width) / 6;
+    equipmentToUse.forEach((equip, i) => {
+      const col = i % itemsPerRow;
+      const row = Math.floor(i / itemsPerRow);
+      const spacing = containerSize.width / (itemsPerRow + 1);
+      // Equipment drops from right side
+      const x = containerSize.width - (spacing * (col + 1));
       // Start items higher above the floor for a more dramatic fall
-      const y = -100 - (30 * Math.floor(i / 5));
-      
-      // Try to get the image URL for the equipment - none available for now
-      const equipmentName = equip.name.toLowerCase().trim();
-      const imageUrl = null; // No equipment images for now
-      
+      // Stagger rows more to prevent overlapping
+      const y = -100 - (40 * row);
+
+      // Use the URL that comes directly with the equipment from the recipe
+      // Default to placeholder if no image found
+      const imageUrl = equip.url || equip.imageUrl || 'https://objectstorage.ca-toronto-1.oraclecloud.com/p/LHruGKILbQNvy2_V89soZbDGmCXZ-RecXxEAAzoKdZx1y9Tcuz0J-gEmWtIcNZhJ/n/yzep9haqilyk/b/SizzleGeneratedImages/o/placeholder_equipment.png';
+
+      if (imageUrl) totalImageCount++;
+
       allItems.push({
         id: `equipment-${i}`,
         name: equip.name,
@@ -278,15 +402,19 @@ const PhysicsCounter = React.forwardRef<{
         hasImageError: false
       });
     });
-    
+
+    // Set total images count
+    totalImages.current = totalImageCount;
+    console.log('Total images to load:', totalImageCount);
+
     // Check for items against walls during initialization
     const itemsWithWallState = allItems.map(item => ({
       ...item,
       isAgainstWall: isItemAgainstWall(item)
     }));
-    
+
     setItems(itemsWithWallState);
-  }, [ingredients, equipment, containerSize.width, floorY]);
+  }, [ingredients, equipment, containerSize.width, floorY, isVisible]);
   
   // Get container dimensions on mount
   useEffect(() => {
@@ -308,8 +436,13 @@ const PhysicsCounter = React.forwardRef<{
   
   // Animation frame for falling motion - Applied to ALL items at once
   useEffect(() => {
-    // If no items are falling, don't set up animation
-    if (!items.some(item => item.falling)) return;
+    // Run animation if any items are falling OR if any items are being dragged
+    // (so we can detect unstable items when drag ends)
+    const shouldAnimate = items.some(item => item.falling) || isDragging;
+    if (!shouldAnimate) return;
+
+    // Don't run physics when component is not visible
+    if (!isVisible) return;
 
     // First, mark all items that are against walls
     let updatedItems = items.map(item => ({
@@ -352,13 +485,23 @@ const PhysicsCounter = React.forwardRef<{
           // Update fall speed using global constant for acceleration
           fallSpeeds[item.id] *= PHYSICS_CONSTANTS.FALL_ACCELERATION;
 
+          // Apply minimum velocity threshold to prevent micro-movements and jitter
+          const MIN_VELOCITY = 0.1;
+          if (Math.abs(fallSpeeds[item.id]) < MIN_VELOCITY) {
+            fallSpeeds[item.id] = 0;
+          }
+          if (Math.abs(horizontalVelocities[item.id]) < MIN_VELOCITY) {
+            horizontalVelocities[item.id] = 0;
+          }
+
           // Calculate new position with both vertical and horizontal components
           let newY = item.y + fallSpeeds[item.id];
           let newX = item.x + horizontalVelocities[item.id];
 
           const itemRadius = item.size / 2;
 
-          // Check for collisions with other items
+          // Check for collisions with other items (landing on top)
+          let hasLanded = false;
           for (const otherItem of updatedItems) {
             // Skip self-collision
             if (otherItem.id === item.id) continue;
@@ -380,23 +523,31 @@ const PhysicsCounter = React.forwardRef<{
               const ny = dy / (distance || 0.0001);
 
               // If the item is mostly above the other item (about to land on it)
-              // Apply a horizontal bounce effect
-              if (ny < -0.7) { // Coming from above
-                // Apply horizontal velocity in the direction away from the center
-                // Horizontal bounce is stronger when falling faster
-                horizontalVelocities[item.id] = nx * Math.min(15, fallSpeeds[item.id] * 1.5);
+              if (ny < -0.5) { // Coming from above (relaxed from -0.7)
+                // Calculate landing position - place item on top
+                newY = otherItem.y + ny * minDist;
+                newX = otherItem.x + nx * minDist;
 
-                // Reduce vertical velocity (bounce effect)
-                fallSpeeds[item.id] *= 0.4;
+                // Apply gentle horizontal bounce - much weaker than before
+                horizontalVelocities[item.id] = nx * Math.min(8, fallSpeeds[item.id] * 0.6);
 
-                // Move item out of collision - lift it slightly above the collision point
-                const overlapY = minDist - distance;
-                newY = otherItem.y + ny * (minDist + 2); // Extra 2px to prevent sticking
-
-                // Adjust horizontal position based on bounce direction
-                newX = otherItem.x + nx * (minDist + 2);
+                // Stop vertical fall speed when landing
+                fallSpeeds[item.id] = 0;
+                hasLanded = true;
+                break; // Stop checking other collisions
               }
             }
+          }
+
+          // If item has landed on another item and has low velocity, mark as not falling
+          if (hasLanded && Math.abs(horizontalVelocities[item.id]) < 1) {
+            return {
+              ...item,
+              x: newX,
+              y: newY,
+              falling: false,
+              isAgainstWall: isItemAgainstWall({...item, x: newX, y: newY})
+            };
           }
 
           // Check if item has reached the floor
@@ -444,24 +595,26 @@ const PhysicsCounter = React.forwardRef<{
             // Check if the item will be against a wall in its final position
             const againstWall = isItemAgainstWall({...item, y: finalY, x: adjustedX});
 
-            // Damp horizontal velocity when hitting floor
-            horizontalVelocities[item.id] *= 0.8;
+            // Damp horizontal velocity when hitting floor - stronger damping
+            horizontalVelocities[item.id] *= 0.7;
 
-            // If horizontal velocity is significant, keep item moving horizontally
-            if (Math.abs(horizontalVelocities[item.id]) > 0.5) {
-              return {
-                ...item,
-                x: adjustedX,
-                y: finalY,
-                isAgainstWall: againstWall
-              };
-            } else {
-              // If barely moving, stop the item completely
+            // If horizontal velocity is very low or zero, stop the item
+            if (Math.abs(horizontalVelocities[item.id]) < 0.3) {
+              // Stop the item completely
+              horizontalVelocities[item.id] = 0;
               return {
                 ...item,
                 x: adjustedX,
                 y: finalY,
                 falling: false,
+                isAgainstWall: againstWall
+              };
+            } else {
+              // Keep item moving horizontally with reduced speed
+              return {
+                ...item,
+                x: adjustedX,
+                y: finalY,
                 isAgainstWall: againstWall
               };
             }
@@ -526,6 +679,108 @@ const PhysicsCounter = React.forwardRef<{
           };
         });
 
+        // Check for unstable stacking - items should fall off if not balanced
+        updatedItems = updatedItems.map(item => {
+          // Skip items already falling
+          if (item.falling) return item;
+
+          const itemRadius = item.size / 2;
+          const bottomEdge = item.y + itemRadius;
+
+          // Check if item is on the floor - if so, it's stable
+          if (Math.abs(bottomEdge - floorY) < 2) return item;
+
+          // IMPORTANT: Also check if item is just floating in mid-air with NO support at all
+          // This catches items that were pushed up and left unsupported
+          let hasAnySupport = false;
+          for (const otherItem of updatedItems) {
+            if (otherItem.id === item.id) continue;
+
+            const dx = item.x - otherItem.x;
+            const dy = item.y - otherItem.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            const minDist = itemRadius + otherItem.size / 2;
+
+            // Check if this item is touching another AND is above it
+            if (distance < minDist + 5 && dy < 0) {
+              hasAnySupport = true;
+              break;
+            }
+          }
+
+          // If no support at all, start falling immediately
+          if (!hasAnySupport) {
+            fallSpeeds[item.id] = 1.0; // Start falling with some speed
+            return {
+              ...item,
+              falling: true
+            };
+          }
+
+          // Item is not on the floor - check if it's balanced on multiple items (pyramid style)
+          let supportingItems = [];
+
+          for (const otherItem of updatedItems) {
+            if (otherItem.id === item.id) continue;
+
+            // Calculate distance between centers
+            const dx = item.x - otherItem.x;
+            const dy = item.y - otherItem.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            const minDist = itemRadius + otherItem.size / 2;
+
+            // Check if items are touching and this item is above the other
+            if (distance < minDist + 5 && dy < 0) {
+              // Very strict balance check - item must be nearly perfectly centered
+              const horizontalOffset = Math.abs(dx);
+              const maxAllowedOffset = (itemRadius + otherItem.size / 2) * 0.25; // Only 25% off-center allowed
+
+              if (horizontalOffset < maxAllowedOffset) {
+                supportingItems.push({
+                  item: otherItem,
+                  dx: dx,
+                  distance: distance
+                });
+              }
+            }
+          }
+
+          // For stable stacking, item needs to be either:
+          // 1. Centered on one item (very strict), OR
+          // 2. Balanced between two items (pyramid style)
+          let isBalanced = false;
+
+          if (supportingItems.length === 1) {
+            // Single support point - must be very well centered (already checked above)
+            const horizontalOffset = Math.abs(supportingItems[0].dx);
+            // Even stricter for single support - only 15% off-center
+            const maxOffset = (itemRadius + supportingItems[0].item.size / 2) * 0.15;
+            isBalanced = horizontalOffset < maxOffset;
+          } else if (supportingItems.length >= 2) {
+            // Multiple support points (pyramid) - check if they're on opposite sides
+            const leftSupports = supportingItems.filter(s => s.dx < 0).length;
+            const rightSupports = supportingItems.filter(s => s.dx > 0).length;
+
+            // Balanced if there are supports on both sides
+            isBalanced = leftSupports > 0 && rightSupports > 0;
+          }
+
+          // If item is not balanced, make it fall
+          if (supportingItems.length > 0 && !isBalanced) {
+            // Apply horizontal velocity in the direction it's leaning
+            const avgDx = supportingItems.reduce((sum, s) => sum + s.dx, 0) / supportingItems.length;
+            horizontalVelocities[item.id] = avgDx > 0 ? 4 : -4; // Slide off
+            fallSpeeds[item.id] = 0.5; // Start falling slowly
+
+            return {
+              ...item,
+              falling: true
+            };
+          }
+
+          return item;
+        });
+
         return updatedItems;
       });
 
@@ -538,7 +793,7 @@ const PhysicsCounter = React.forwardRef<{
     return () => {
       if (animationId) cancelAnimationFrame(animationId);
     };
-  }, [items, floorY]);
+  }, [items, floorY, isVisible, isDragging]);
   
   // Helper functions for collision detection
   const isItemAgainstWall = (item: Item): boolean => {
@@ -694,7 +949,29 @@ const PhysicsCounter = React.forwardRef<{
 
             const radius = item.size / 2;
 
-            // Check for wall collision with possibility for bounce/stack
+            // FIRST: Check for collisions with other items to prevent phasing
+            // This must happen BEFORE wall boundary checks
+            for (const otherItem of updatedItems) {
+              if (otherItem.id === item.id || processedIds.has(otherItem.id)) continue;
+
+              const dx = newX - otherItem.x;
+              const dy = newY - otherItem.y;
+              const dist = Math.sqrt(dx * dx + dy * dy);
+              const minDist = radius + otherItem.size / 2;
+
+              // If overlapping, push apart
+              if (dist < minDist) {
+                const overlap = minDist - dist;
+                const nx = dx / (dist || 0.001);
+                const ny = dy / (dist || 0.001);
+
+                // Push away from the collision
+                newX = otherItem.x + nx * minDist;
+                newY = otherItem.y + ny * minDist;
+              }
+            }
+
+            // SECOND: Check for wall collision with possibility for bounce/stack
             const isNearLeftWall = newX - radius < 0;
             const isNearRightWall = newX + radius > containerWidth;
 
@@ -856,16 +1133,13 @@ const PhysicsCounter = React.forwardRef<{
                   const pushingAgainstRightWall = isAtRightWall && nx > 0;
 
                   if (pushingAgainstLeftWall || pushingAgainstRightWall) {
-                    // Allow partial movement with resistance
-                    const resistance = 0.9; // Higher resistance when against wall
+                    // Prevent any horizontal compression against walls
+                    canContinuePush = false;
+                    // Ensure item stays at wall boundary
                     if (pushingAgainstLeftWall) {
-                      // Limited leftward movement (with resistance)
-                      const allowedMove = (overlap * (1 - resistance)) * -1; // Negative for leftward
-                      pushX = otherItem.x + allowedMove;
+                      pushX = otherRadius; // Lock to left wall
                     } else if (pushingAgainstRightWall) {
-                      // Limited rightward movement (with resistance)
-                      const allowedMove = overlap * (1 - resistance);
-                      pushX = otherItem.x + allowedMove;
+                      pushX = containerWidth - otherRadius; // Lock to right wall
                     }
                     // Maintain vertical position
                     pushY = otherItem.y;
@@ -898,6 +1172,116 @@ const PhysicsCounter = React.forwardRef<{
           // Set up next iteration with new items to process
           itemsToProcess = nextItemsToProcess;
         }
+
+        // FINAL PASS: Resolve any remaining overlaps to prevent phasing
+        // This ensures items never overlap even if cascading pushes caused issues
+        let finalCleanup = true;
+        let cleanupIterations = 0;
+        const maxCleanupIterations = 5;
+
+        while (finalCleanup && cleanupIterations < maxCleanupIterations) {
+          finalCleanup = false;
+          cleanupIterations++;
+
+          for (let i = 0; i < updatedItems.length; i++) {
+            for (let j = i + 1; j < updatedItems.length; j++) {
+              const item1 = updatedItems[i];
+              const item2 = updatedItems[j];
+
+              const dx = item1.x - item2.x;
+              const dy = item1.y - item2.y;
+              const dist = Math.sqrt(dx * dx + dy * dy);
+              const minDist = (item1.size / 2) + (item2.size / 2);
+
+              // If overlapping
+              if (dist < minDist - 0.1) {
+                finalCleanup = true;
+                const overlap = minDist - dist;
+                const nx = dx / (dist || 0.001);
+                const ny = dy / (dist || 0.001);
+
+                // Push both items apart equally, but prefer horizontal separation
+                // to avoid pushing items through the floor
+                let item1NewY = item1.y + ny * overlap * 0.5;
+                let item2NewY = item2.y - ny * overlap * 0.5;
+
+                // Enforce floor boundary - never push items below floor
+                const item1Radius = item1.size / 2;
+                const item2Radius = item2.size / 2;
+
+                if (item1NewY + item1Radius > floorY) {
+                  item1NewY = floorY - item1Radius;
+                }
+                if (item2NewY + item2Radius > floorY) {
+                  item2NewY = floorY - item2Radius;
+                }
+
+                updatedItems[i] = {
+                  ...item1,
+                  x: item1.x + nx * overlap * 0.5,
+                  y: item1NewY
+                };
+                updatedItems[j] = {
+                  ...item2,
+                  x: item2.x - nx * overlap * 0.5,
+                  y: item2NewY
+                };
+              }
+            }
+          }
+        }
+
+        // Final floor enforcement pass - ensure no items are below floor
+        updatedItems = updatedItems.map(item => {
+          const radius = item.size / 2;
+          if (item.y + radius > floorY) {
+            return {
+              ...item,
+              y: floorY - radius
+            };
+          }
+          return item;
+        });
+
+        // Check for items with no support and mark them as falling
+        // This ensures items fall immediately when pushed upward and left unsupported
+        updatedItems = updatedItems.map(item => {
+          // Skip the item being dragged
+          if (item.id === movedItem.id) return item;
+
+          const itemRadius = item.size / 2;
+
+          // Check if item is on the floor
+          const onFloor = Math.abs((item.y + itemRadius) - floorY) < 2;
+          if (onFloor) return item; // Items on floor don't need support
+
+          // Check if item has support below it
+          let hasSupport = false;
+          for (const otherItem of updatedItems) {
+            if (otherItem.id === item.id) continue;
+
+            const dx = item.x - otherItem.x;
+            const dy = item.y - otherItem.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            const minDist = itemRadius + otherItem.size / 2;
+
+            // Check if this item is touching another AND is above it
+            if (distance < minDist + 5 && dy < 0) {
+              hasSupport = true;
+              break;
+            }
+          }
+
+          // If no support, mark as falling
+          if (!hasSupport) {
+            return {
+              ...item,
+              falling: true
+            };
+          }
+
+          return item;
+        });
 
         return updatedItems;
       });
@@ -1286,10 +1670,24 @@ const PhysicsCounter = React.forwardRef<{
     document.addEventListener('touchend', handleTouchEnd);
   };
   
+  // Debug: Log item positions when they change
+  useEffect(() => {
+    if (items.length > 0) {
+      console.log('Items positions:', items.slice(0, 3).map(i => ({
+        id: i.id,
+        x: Math.round(i.x),
+        y: Math.round(i.y),
+        falling: i.falling,
+        hasImage: !!i.imageUrl,
+        imageError: i.hasImageError
+      })));
+    }
+  }, [items]);
+
   return (
-    <div 
+    <div
       ref={containerRef}
-      style={{ 
+      style={{
         width: '100vw',
         height: '100vh',
         position: 'fixed',
@@ -1302,7 +1700,7 @@ const PhysicsCounter = React.forwardRef<{
       }}
     >
       {/* No floor marker visualization */}
-      
+
       {/* Render all items */}
       {items.map(item => (
         <div
@@ -1324,16 +1722,20 @@ const PhysicsCounter = React.forwardRef<{
             justifyContent: 'center',
             overflow: 'hidden',
             transform: 'translate(-50%, -50%)',
-            animationName: animationState === 'jiggle' 
+            animationName: animationState === 'jiggle'
                           ? (animationDirection === 1 ? 'jiggleRightAnim' : 'jiggleLeftAnim')
-                          : animationState === 'swipe' 
+                          : animationState === 'swipe'
                           ? (animationDirection === 1 ? 'swipeLeftAnim' : 'swipeRightAnim')
+                          : animationState === 'slideIn'
+                          ? (animationDirection === 1 ? 'slideInFromRightAnim' : 'slideInFromLeftAnim')
                           : 'none',
-            animationDuration: animationState === 'jiggle' ? '0.3s' : 
-                              animationState === 'swipe' ? '0.5s' : 
+            animationDuration: animationState === 'jiggle' ? '0.3s' :
+                              animationState === 'swipe' ? '0.5s' :
+                              animationState === 'slideIn' ? '0.8s' :
                               '0s',
-            animationTimingFunction: animationState === 'jiggle' ? 'cubic-bezier(0.25, 1, 0.5, 1.3)' : 
-                                    animationState === 'swipe' ? 'cubic-bezier(0.33, 0.1, 0.67, 0.9)' : 
+            animationTimingFunction: animationState === 'jiggle' ? 'cubic-bezier(0.25, 1, 0.5, 1.3)' :
+                                    animationState === 'swipe' ? 'cubic-bezier(0.33, 0.1, 0.67, 0.9)' :
+                                    animationState === 'slideIn' ? 'cubic-bezier(0.16, 1, 0.3, 1)' :
                                     'ease-out',
             animationFillMode: 'forwards',
             zIndex: item.dragging ? 30000 : 25000, // Much higher z-index to appear above other elements
@@ -1350,7 +1752,7 @@ const PhysicsCounter = React.forwardRef<{
         >
           {/* Display the image if available and hasn't errored */}
           {item.imageUrl && !item.hasImageError && (
-            <img 
+            <img
               src={item.imageUrl}
               alt={item.name}
               style={{
@@ -1359,6 +1761,7 @@ const PhysicsCounter = React.forwardRef<{
                 objectFit: 'contain',
                 borderRadius: '50%'
               }}
+              onLoad={() => handleImageLoad(item.id)}
               onError={() => handleImageError(item.id)}
             />
           )}
@@ -1406,7 +1809,7 @@ const PhysicsCounter = React.forwardRef<{
         </div>
       ))}
       
-      {/* Loading indicator with debug information */}
+      {/* Loading indicator with debug information - shown while waiting for counter */}
       {isLoading && (
         <div
           style={{
@@ -1416,7 +1819,8 @@ const PhysicsCounter = React.forwardRef<{
             alignItems: 'center',
             justifyContent: 'center',
             backgroundColor: 'rgba(0, 0, 0, 0.7)',
-            backdropFilter: 'blur(4px)'
+            backdropFilter: 'blur(4px)',
+            zIndex: 40000
           }}
         >
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', maxWidth: '500px' }}>
@@ -1434,9 +1838,9 @@ const PhysicsCounter = React.forwardRef<{
             <p style={{ color: 'white', fontWeight: 500, fontSize: '18px', marginBottom: '8px' }}>
               Waiting for counter element...
             </p>
-            <div style={{ 
-              backgroundColor: 'rgba(255, 255, 255, 0.1)', 
-              padding: '10px', 
+            <div style={{
+              backgroundColor: 'rgba(255, 255, 255, 0.1)',
+              padding: '10px',
               borderRadius: '8px',
               color: 'rgba(255, 255, 255, 0.8)',
               fontSize: '14px',
@@ -1457,6 +1861,42 @@ const PhysicsCounter = React.forwardRef<{
                 If loading persists, please refresh the page.
               </p>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Image loading indicator - shown while images are loading */}
+      {shouldShowLoading && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: 'rgba(0, 0, 0, 0.7)',
+            backdropFilter: 'blur(4px)',
+            zIndex: 40000
+          }}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            <div
+              style={{
+                width: '4rem',
+                height: '4rem',
+                border: '4px solid rgba(255, 255, 255, 0.2)',
+                borderTopColor: 'rgba(255, 255, 255, 0.8)',
+                borderRadius: '50%',
+                animation: 'spin 1s linear infinite',
+                marginBottom: '1rem'
+              }}
+            />
+            <p style={{ color: 'white', fontWeight: 500, fontSize: '18px' }}>
+              Loading images...
+            </p>
+            <p style={{ color: 'rgba(255, 255, 255, 0.8)', fontSize: '14px', marginTop: '0.5rem' }}>
+              {imagesLoaded} / {totalImages.current}
+            </p>
           </div>
         </div>
       )}
@@ -1491,7 +1931,36 @@ const PhysicsCounter = React.forwardRef<{
           0% { transform: translate(-50%, -50%) translateX(-28px) rotate(-3deg); }
           100% { transform: translate(-50%, -50%) translateX(1200px) rotate(10deg); }
         }
-        
+
+        /* Slide in animations (entrance when returning to slide) */
+        @keyframes slideInFromRightAnim {
+          0% {
+            transform: translate(-50%, -50%) translateX(1200px);
+            opacity: 0;
+          }
+          20% {
+            opacity: 1;
+          }
+          100% {
+            transform: translate(-50%, -50%) translateX(0) rotate(0deg);
+            opacity: 1;
+          }
+        }
+
+        @keyframes slideInFromLeftAnim {
+          0% {
+            transform: translate(-50%, -50%) translateX(-1200px);
+            opacity: 0;
+          }
+          20% {
+            opacity: 1;
+          }
+          100% {
+            transform: translate(-50%, -50%) translateX(0) rotate(0deg);
+            opacity: 1;
+          }
+        }
+
         .physics-item {
           position: absolute;
           border-radius: 50%;

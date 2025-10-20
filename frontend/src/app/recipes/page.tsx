@@ -45,8 +45,8 @@ export default function RecipesPage() {
   }, []);
 
   return (
-    <div className="h-full min-h-screen">
-      
+    <div className="h-full min-h-screen pt-6">
+
       <div className="container mx-auto px-4 max-w-5xl">
         <motion.div
           className="bg-white rounded-xl shadow-md p-8 mb-8"

@@ -28,36 +28,50 @@ export const getIngredientImageUrl = async (ingredientName: string): Promise<str
       const ingredients = data.ingredients;
       const ingredientNameLower = ingredientName.toLowerCase();
       
-      // First try to find exact matches
+      // Find the best match with smart word-based matching
       let bestMatch = null;
-      
-      // Try to find a match:
-      // 1. Exact match
-      // 2. Ingredient name contains the search term
-      // 3. Search term contains the ingredient name
+      let exactMatch = null;
+      let wordMatch = null;
+      let containsMatch = null;
+
+      // Split search term into words for better matching
+      const searchWords = ingredientNameLower.split(/\s+/).filter(w => w.length > 2);
+
       for (const ingredient of ingredients) {
         if (!ingredient.name) continue;
-        
-        const ingredientLower = ingredient.name.toLowerCase();
-        
-        // Exact match is the best
+
+        const ingredientLower = ingredient.name.toLowerCase().trim();
+
+        // 1. EXACT match (highest priority)
         if (ingredientLower === ingredientNameLower) {
-          bestMatch = ingredient;
-          break;
+          exactMatch = ingredient;
+          break; // Stop immediately on exact match
         }
-        
-        // Ingredient contains the search term
-        if (ingredientLower.includes(ingredientNameLower)) {
-          bestMatch = ingredient;
-          break;
+
+        // 2. Word-based match (e.g., "Japanese short-grain rice" matches "Rice")
+        // Check if any significant word from the search appears in the ingredient name
+        if (!wordMatch && searchWords.length > 0) {
+          const ingredientWords = ingredientLower.split(/\s+/);
+          const hasWordMatch = searchWords.some(searchWord =>
+            ingredientWords.some(ingWord =>
+              ingWord === searchWord ||
+              ingWord.startsWith(searchWord) ||
+              searchWord.startsWith(ingWord)
+            )
+          );
+          if (hasWordMatch) {
+            wordMatch = ingredient;
+          }
         }
-        
-        // Search term contains the ingredient
-        if (ingredientNameLower.includes(ingredientLower)) {
-          bestMatch = ingredient;
-          // Don't break here - might find a better match
+
+        // 3. Contains search term (fallback)
+        if (!containsMatch && ingredientLower.includes(ingredientNameLower)) {
+          containsMatch = ingredient;
         }
       }
+
+      // Use the best match in order of priority
+      bestMatch = exactMatch || wordMatch || containsMatch;
       
       // Use the best match if found
       if (bestMatch && bestMatch.url) {
@@ -414,47 +428,61 @@ export const getEquipmentImageUrl = async (equipmentName: string): Promise<strin
   }
   
   try {
-    // Try to find the equipment using the search endpoint
-    const response = await axios.get(`${API_URL}/ingredients?search=${encodeURIComponent(equipmentName)}&limit=5`);
-    
+    // Try to find the equipment using the EQUIPMENT search endpoint
+    const response = await axios.get(`${API_URL}/equipment?search=${encodeURIComponent(equipmentName)}&limit=5`);
+
     // Extract data from the nested structure
     const responseData = response.data;
     const data = responseData.data || responseData;
-    
-    if (data && data.ingredients && data.ingredients.length > 0) {
-      const equipment = data.ingredients;
-      const equipmentNameLower = equipmentName.toLowerCase();
-      
-      // First try to find exact matches
+
+    if (data && data.equipment && data.equipment.length > 0) {
+      const equipment = data.equipment;
+      const equipmentNameLower = equipmentName.toLowerCase().trim();
+
+      // Find the best match with smart word-based matching
       let bestMatch = null;
-      
-      // Try to find a match:
-      // 1. Exact match
-      // 2. Equipment name contains the search term
-      // 3. Search term contains the equipment name
+      let exactMatch = null;
+      let wordMatch = null;
+      let containsMatch = null;
+
+      // Split search term into words for better matching
+      const searchWords = equipmentNameLower.split(/\s+/).filter(w => w.length > 2);
+
       for (const item of equipment) {
         if (!item.name) continue;
-        
-        const itemLower = item.name.toLowerCase();
-        
-        // Exact match is the best
+
+        const itemLower = item.name.toLowerCase().trim();
+
+        // 1. EXACT match (highest priority)
         if (itemLower === equipmentNameLower) {
-          bestMatch = item;
-          break;
+          exactMatch = item;
+          break; // Stop immediately on exact match
         }
-        
-        // Equipment contains the search term
-        if (itemLower.includes(equipmentNameLower)) {
-          bestMatch = item;
-          break;
+
+        // 2. Word-based match (e.g., "Rice cooker" matches "Rice Cooker")
+        // Check if any significant word from the search appears in the equipment name
+        if (!wordMatch && searchWords.length > 0) {
+          const equipmentWords = itemLower.split(/\s+/);
+          const hasWordMatch = searchWords.some(searchWord =>
+            equipmentWords.some(eqWord =>
+              eqWord === searchWord ||
+              eqWord.startsWith(searchWord) ||
+              searchWord.startsWith(eqWord)
+            )
+          );
+          if (hasWordMatch) {
+            wordMatch = item;
+          }
         }
-        
-        // Search term contains the equipment
-        if (equipmentNameLower.includes(itemLower)) {
-          bestMatch = item;
-          // Don't break here - might find a better match
+
+        // 3. Contains search term (fallback)
+        if (!containsMatch && itemLower.includes(equipmentNameLower)) {
+          containsMatch = item;
         }
       }
+
+      // Use the best match in order of priority
+      bestMatch = exactMatch || wordMatch || containsMatch;
       
       // Use the best match if found
       if (bestMatch && bestMatch.url) {

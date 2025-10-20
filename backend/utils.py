@@ -34,54 +34,57 @@ logger = logging.getLogger("sizzle")
 def format_oci_url(url: str) -> str:
     """
     Formats an Oracle Cloud Infrastructure URL to ensure it has proper access tokens.
-    
+
     Args:
         url: The original OCI URL
-        
+
     Returns:
-        A properly formatted OCI URL with the correct access parameters
+        A properly formatted OCI URL with the correct PAR access token
     """
     if not url or 'objectstorage' not in url:
         return url
-        
+
+    # The PAR (Pre-Authenticated Request) token for the SizzleGeneratedImages bucket
+    PAR_TOKEN = "VbMtmi4NetAmyHfVagGHtZGpkoLBtAptLSOPk0ssRwJn-22COZd1t8HZMrAV0ZSo"
+
     try:
         parsed_url = urlparse(url)
-        
-        # Already has a proper access token
-        if '/p/' in parsed_url.path:
+
+        # Already has a proper access token (not auto-par-token)
+        if '/p/' in parsed_url.path and 'auto-par-token' not in url:
             return url
-            
+
         # Extract namespace, bucket and object
         path = parsed_url.path
         namespace = ""
         bucket = ""
         object_name = ""
-        
+
         # Extract namespace
         n_index = path.find('/n/')
         if n_index >= 0:
             after_n = path[n_index + 3:]
             next_slash = after_n.find('/')
             namespace = after_n[:next_slash] if next_slash > 0 else after_n
-            
+
         # Extract bucket
         b_index = path.find('/b/')
         if b_index >= 0:
             after_b = path[b_index + 3:]
             next_slash = after_b.find('/')
             bucket = after_b[:next_slash] if next_slash > 0 else after_b
-            
+
         # Extract object name
         o_index = path.find('/o/')
         if o_index >= 0:
             object_name = path[o_index + 3:]
-            
+
         # If we have all components, construct a proper PAR URL
         if namespace and bucket and object_name:
-            return f"{parsed_url.scheme}://{parsed_url.netloc}/p/auto-par-token/n/{namespace}/b/{bucket}/o/{object_name}"
+            return f"{parsed_url.scheme}://{parsed_url.netloc}/p/{PAR_TOKEN}/n/{namespace}/b/{bucket}/o/{object_name}"
     except Exception as e:
         logger.error(f"Error formatting OCI URL {url}: {str(e)}")
-        
+
     # Return original if anything fails
     return url
 

@@ -14,7 +14,7 @@ export default function RootLayoutClient({
     <>
       <KitchenBackground />
       <Navigation />
-      <main className="relative z-10 min-h-screen">
+      <main className="relative z-10 pt-[73px]">
         {children}
       </main>
     </>

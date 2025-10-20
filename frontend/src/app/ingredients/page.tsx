@@ -31,27 +31,31 @@ function useFetch<T>(url: string, options?: RequestInit) {
 
 // Custom hook for persisting state to localStorage
 function useLocalStorage<T>(key: string, initialValue: T): [T, (value: T) => void] {
-  // Get from localStorage or use initialValue
-  const [storedValue, setStoredValue] = useState<T>(() => {
-    if (typeof window === 'undefined') {
-      return initialValue;
+  // Always start with initialValue to avoid hydration mismatch
+  const [storedValue, setStoredValue] = useState<T>(initialValue);
+  const [isHydrated, setIsHydrated] = useState(false);
+
+  // Load from localStorage after hydration
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const item = window.localStorage.getItem(key);
+        if (item) {
+          setStoredValue(JSON.parse(item) as T);
+        }
+      } catch (error) {
+        // Silently handle errors
+      }
+      setIsHydrated(true);
     }
-    
-    try {
-      const item = window.localStorage.getItem(key);
-      // Parse stored json or return initialValue if none
-      return item ? (JSON.parse(item) as T) : initialValue;
-    } catch (error) {
-      return initialValue;
-    }
-  });
-  
+  }, [key]);
+
   // Return a wrapped version of useState's setter function that persists the new value to localStorage
   const setValue = useCallback((value: T) => {
     try {
       // Save state
       setStoredValue(value);
-      
+
       // Save to localStorage
       if (typeof window !== 'undefined') {
         window.localStorage.setItem(key, JSON.stringify(value));
@@ -60,7 +64,7 @@ function useLocalStorage<T>(key: string, initialValue: T): [T, (value: T) => voi
       // Just handle the error silently
     }
   }, [key]);
-  
+
   return [storedValue, setValue];
 }
 
@@ -269,6 +273,19 @@ export default function IngredientsPage() {
     }
   };
   
+  // Prevent body scrolling on this page
+  useEffect(() => {
+    // Save original overflow style
+    const originalOverflow = document.body.style.overflow;
+    // Prevent scrolling
+    document.body.style.overflow = 'hidden';
+
+    // Restore on cleanup
+    return () => {
+      document.body.style.overflow = originalOverflow;
+    };
+  }, []);
+
   // Initial data loading
   useEffect(() => {
     // Try to load from database first
@@ -279,7 +296,7 @@ export default function IngredientsPage() {
         console.error("Error in initial data loading:", error);
       }
     };
-    
+
     initData();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -360,12 +377,17 @@ export default function IngredientsPage() {
       return Array.from({length: 5}, (_, i) => currentPage - 2 + i);
     }
   };
-  
+
+  // Handle page change
+  const handlePageChange = (page: number) => {
+    setCurrentPage(page);
+  };
+
   // Create a Pagination component to avoid duplication
   const Pagination = () => (
     <nav className="inline-flex rounded-md shadow">
       <button
-        onClick={() => changePage(1)}
+        onClick={() => handlePageChange(1)}
         disabled={currentPage === 1}
         className={`px-3 py-1 rounded-l-md border ${
           currentPage === 1 
@@ -377,7 +399,7 @@ export default function IngredientsPage() {
       </button>
       
       <button
-        onClick={() => changePage(currentPage - 1)}
+        onClick={() => handlePageChange(currentPage - 1)}
         disabled={currentPage === 1}
         className={`px-3 py-1 border-t border-b ${
           currentPage === 1 
@@ -391,7 +413,7 @@ export default function IngredientsPage() {
       {getPageNumbers().map(page => (
         <button
           key={page}
-          onClick={() => changePage(page)}
+          onClick={() => handlePageChange(page)}
           className={`px-3 py-1 border-t border-b ${
             currentPage === page
               ? 'bg-blue-500 text-white'
@@ -403,7 +425,7 @@ export default function IngredientsPage() {
       ))}
       
       <button
-        onClick={() => changePage(currentPage + 1)}
+        onClick={() => handlePageChange(currentPage + 1)}
         disabled={currentPage === totalPages}
         className={`px-3 py-1 border-t border-b ${
           currentPage === totalPages
@@ -415,7 +437,7 @@ export default function IngredientsPage() {
       </button>
       
       <button
-        onClick={() => changePage(totalPages)}
+        onClick={() => handlePageChange(totalPages)}
         disabled={currentPage === totalPages}
         className={`px-3 py-1 rounded-r-md border ${
           currentPage === totalPages
@@ -427,20 +449,14 @@ export default function IngredientsPage() {
       </button>
     </nav>
   );
-  
-  // Handle page change
-  const changePage = (page: number) => {
-    setCurrentPage(page);
-    // Scroll to top when changing pages
-    window.scrollTo(0, 0);
-  };
-  
+
   return (
-    <div className="container mx-auto px-4 py-8">
-      <h1 className="text-3xl font-bold mb-4">Ingredient Library</h1>
-      
+    <div className="fixed inset-0 top-[73px] overflow-hidden flex flex-col">
+      <div className="container mx-auto px-4 pt-6 pb-0 flex-shrink-0">
+        <h1 className="text-3xl font-bold mb-4">Ingredient Library</h1>
+
       {/* Search and filters */}
-      <form onSubmit={handleSearchSubmit} className="mb-6 flex flex-col md:flex-row gap-4">
+      <form onSubmit={handleSearchSubmit} className="mb-4 flex flex-col md:flex-row gap-4">
         <div className="flex-1">
           <label htmlFor="search" className="block text-sm font-medium text-gray-700 mb-1">
             Search ingredients
@@ -465,17 +481,20 @@ export default function IngredientsPage() {
         
       </form>
       
-      <p className="text-gray-600 mb-8">
-        Showing {filteredIngredients.length} of {totalIngredients} ingredients (Page {currentPage} of {totalPages})
-      </p>
-      
-      
-      {/* Pagination Controls (Top) */}
-      {totalPages > 1 && (
-        <div className="flex justify-center mb-8">
-          <Pagination />
-        </div>
-      )}
+        <p className="text-gray-600 mb-2">
+          Showing {filteredIngredients.length} of {totalIngredients} ingredients (Page {currentPage} of {totalPages})
+        </p>
+
+        {/* Pagination Controls (Top) */}
+        {totalPages > 1 && (
+          <div className="flex justify-center mb-2">
+            <Pagination />
+          </div>
+        )}
+      </div>
+
+      {/* Scrollable content area */}
+      <div className="flex-1 overflow-y-auto px-4 container mx-auto pb-4">
       
       {loading ? (
         <div className="flex justify-center items-center h-64">
@@ -510,13 +529,13 @@ export default function IngredientsPage() {
         </div>
       )}
       
-      {/* Pagination Controls (Bottom) */}
-      {totalPages > 1 && (
-        <div className="flex justify-center mt-8">
-          <Pagination />
-        </div>
-      )}
-      
+        {/* Pagination Controls (Bottom) */}
+        {totalPages > 1 && (
+          <div className="flex justify-center mt-8 mb-4">
+            <Pagination />
+          </div>
+        )}
+      </div>
     </div>
   );
 }

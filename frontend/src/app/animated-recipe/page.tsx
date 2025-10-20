@@ -31,6 +31,15 @@ export default function AnimatedRecipePage() {
   const [error, setError] = useState<string | null>(null);
   const [showSlideshow, setShowSlideshow] = useState(false);
 
+  // Prevent body scrolling on this page
+  React.useEffect(() => {
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = originalOverflow;
+    };
+  }, []);
+
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -47,8 +56,10 @@ export default function AnimatedRecipePage() {
 
       try {
         // Check if the response has matching_recipes array
-        if (response.data.matching_recipes && Array.isArray(response.data.matching_recipes)) {
-          const recipes = response.data.matching_recipes;
+        // The API returns { status, status_code, data: { matching_recipes: [...] } }
+        const responseData = response.data.data || response.data;
+        if (responseData.matching_recipes && Array.isArray(responseData.matching_recipes)) {
+          const recipes = responseData.matching_recipes;
 
           if (recipes.length === 0) {
             setError('No recipes found for your search. Please try a different query.');
@@ -59,13 +70,19 @@ export default function AnimatedRecipePage() {
 
           // If there's only one recipe, select it automatically and show slideshow
           if (recipes.length === 1) {
+            console.log("Raw recipe from API:", recipes[0]);
             const formattedRecipe = formatRecipe(recipes[0]);
+            console.log("Formatted recipe:", formattedRecipe);
+            console.log("Formatted recipe ingredients:", formattedRecipe.ingredients);
             setSelectedRecipe(formattedRecipe);
             // Always show slideshow for single recipes
             setTimeout(() => setShowSlideshow(true), 50);
           } else if (recipes.length > 0) {
             // If there are multiple recipes, still select the first one but don't show slideshow yet
+            console.log("Raw recipe from API:", recipes[0]);
             const formattedRecipe = formatRecipe(recipes[0]);
+            console.log("Formatted recipe:", formattedRecipe);
+            console.log("Formatted recipe ingredients:", formattedRecipe.ingredients);
             setSelectedRecipe(formattedRecipe);
             // Don't show slideshow yet for multiple recipes
           }
@@ -233,9 +250,9 @@ export default function AnimatedRecipePage() {
     }, 50);
   };
 
-  
+
   return (
-    <div className="h-full min-h-screen">
+    <div className="fixed inset-0 top-[73px] overflow-hidden flex flex-col">
       {/* Slideshow Display */}
       {selectedRecipe && !isLoading && showSlideshow && (
         <SlideshowRecipe
@@ -252,16 +269,16 @@ export default function AnimatedRecipePage() {
           }}
         />
       )}
-      
-      <div className={`container mx-auto px-4 max-w-5xl ${showSlideshow ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+
+      <div className={`container mx-auto px-6 max-w-6xl flex-1 overflow-y-auto pt-6 ${showSlideshow ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
         {/* Search Header */}
-        <motion.div 
-          className="bg-white rounded-2xl shadow-md overflow-hidden mb-8"
+        <motion.div
+          className="bg-white rounded-xl shadow-md overflow-hidden mb-6"
           initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
         >
-          <div className="p-8">
+          <div className="p-6">
             <motion.div 
               className="flex items-center mb-6"
               initial={{ opacity: 0 }}
@@ -325,7 +342,7 @@ export default function AnimatedRecipePage() {
         )}
         
         {/* Recipe Search Results */}
-        {matchingRecipes.length > 1 && !selectedRecipe && (
+        {matchingRecipes.length > 1 && !showSlideshow && (
           <motion.div
             className="bg-white rounded-2xl shadow-md overflow-hidden mb-8"
             initial={{ opacity: 0, y: 30 }}

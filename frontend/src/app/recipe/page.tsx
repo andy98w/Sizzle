@@ -121,15 +121,15 @@ export default function RecipePage() {
   };
   
   return (
-    <div className="h-full min-h-screen">
+    <div className="h-full min-h-screen pt-6">
       {/* Slideshow Display */}
       {showSlideshow && (
-        <SlideshowRecipe 
-          recipe={recipe} 
+        <SlideshowRecipe
+          recipe={recipe}
           onClose={handleClose}
         />
       )}
-      
+
       {/* Recipe Overview Page - only shown when slideshow is not active */}
       <div className={`container mx-auto px-4 max-w-5xl ${showSlideshow ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
         <motion.div 

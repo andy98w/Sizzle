@@ -14,18 +14,141 @@ interface SlideshowRecipeProps {
 const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) => {
   const [currentSlide, setCurrentSlide] = useState(0);
   const [direction, setDirection] = useState(0);
-  
+  const [allImagesLoaded, setAllImagesLoaded] = useState(false);
+  const [loadingProgress, setLoadingProgress] = useState(0);
+
   // Reference to the physics counter component
-  const physicsCounterRef = useRef<{ exitAnimation: () => void }>(null);
-  
+  const physicsCounterRef = useRef<{ exitAnimationNext: () => void; exitAnimationPrev: () => void }>(null);
+
   // Total number of slides: title slide + ingredients/equipment slide + all steps
   const totalSlides = 2 + recipe.steps.length;
-  
+
   // Format times for consistency
   const prepTime = recipe.prepTime || recipe.prep_time || '';
   const cookTime = recipe.cookTime || recipe.cook_time || '';
-  
-  // These functions are used by keyboard events
+
+  // Animation states for synchronization
+  const [ingredientsAnimating, setIngredientsAnimating] = useState(false);
+  const [animationDirection, setAnimationDirection] = useState<1 | -1>(1);
+
+  // Preload only the images needed for THIS recipe
+  useEffect(() => {
+    const preloadAllImages = async () => {
+      console.log('🖼️ Starting to preload images for recipe slideshow...');
+
+      try {
+        const imagesToPreload: string[] = [];
+
+        // Collect ingredient images from recipe
+        if (recipe.ingredients) {
+          console.log('📋 Recipe ingredients:', recipe.ingredients);
+          recipe.ingredients.forEach((ingredient: any) => {
+            console.log(`  - ${ingredient.name}: url="${ingredient.url}", imageUrl="${ingredient.imageUrl}"`);
+            if (ingredient.url || ingredient.imageUrl) {
+              imagesToPreload.push(ingredient.url || ingredient.imageUrl);
+            }
+          });
+        }
+
+        // Collect equipment images from recipe
+        if (recipe.equipment) {
+          console.log('🔧 Recipe equipment:', recipe.equipment);
+          recipe.equipment.forEach((equipment: any) => {
+            console.log(`  - ${equipment.name}: url="${equipment.url}", imageUrl="${equipment.imageUrl}"`);
+            if (equipment.url || equipment.imageUrl) {
+              imagesToPreload.push(equipment.url || equipment.imageUrl);
+            }
+          });
+        }
+
+        // Collect images from recipe steps
+        if (recipe.steps) {
+          recipe.steps.forEach((step: any) => {
+            if (step.ingredients) {
+              step.ingredients.forEach((ingredient: any) => {
+                if (ingredient.url || ingredient.imageUrl) {
+                  imagesToPreload.push(ingredient.url || ingredient.imageUrl);
+                }
+              });
+            }
+            if (step.equipment) {
+              step.equipment.forEach((equipment: any) => {
+                if (equipment.url || equipment.imageUrl) {
+                  imagesToPreload.push(equipment.url || equipment.imageUrl);
+                }
+              });
+            }
+          });
+        }
+
+        // Remove duplicates
+        const uniqueImages = [...new Set(imagesToPreload)].filter(url => url);
+        console.log(`📦 Found ${uniqueImages.length} unique images to preload for this recipe`);
+
+        if (uniqueImages.length === 0) {
+          // No images to load
+          setAllImagesLoaded(true);
+          setLoadingProgress(100);
+          return;
+        }
+
+        // Batch load images in groups of 10 for better performance
+        const BATCH_SIZE = 10;
+        let loadedCount = 0;
+
+        for (let i = 0; i < uniqueImages.length; i += BATCH_SIZE) {
+          const batch = uniqueImages.slice(i, i + BATCH_SIZE);
+
+          const batchPromises = batch.map(url => {
+            return new Promise<void>((resolve) => {
+              const img = new Image();
+
+              img.onload = () => {
+                loadedCount++;
+                const progress = Math.round((loadedCount / uniqueImages.length) * 100);
+                setLoadingProgress(progress);
+                resolve();
+              };
+
+              img.onerror = () => {
+                loadedCount++;
+                const progress = Math.round((loadedCount / uniqueImages.length) * 100);
+                setLoadingProgress(progress);
+                console.warn(`⚠️ Failed to load image:`, url);
+                resolve(); // Resolve anyway to not block loading
+              };
+
+              img.src = url;
+            });
+          });
+
+          // Wait for this batch to complete before starting the next
+          await Promise.all(batchPromises);
+
+          console.log(`✅ Loaded batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(uniqueImages.length / BATCH_SIZE)}`);
+        }
+
+        console.log('✨ All images preloaded!');
+        setAllImagesLoaded(true);
+      } catch (error) {
+        console.error('❌ Error preloading images:', error);
+        // Still allow slideshow to show even if preloading fails
+        setAllImagesLoaded(true);
+        setLoadingProgress(100);
+      }
+    };
+
+    preloadAllImages();
+  }, [recipe]);
+
+  // Function to change slides after animation completes
+  function changeSlide(dir: number) {
+    setDirection(dir);
+    setCurrentSlide(currentSlide + dir);
+    setIngredientsAnimating(false);
+  }
+
+  // Navigation functions
   function goToNext() {
     if (currentSlide < totalSlides - 1) {
       // If we're on the ingredients slide (slide 1), trigger the animation
@@ -35,29 +158,12 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
         physicsCounterRef.current.exitAnimationNext();
         // Animation will call changeSlide() after completion
       } else {
-        changeSlide(1);
+        setDirection(1);
+        setCurrentSlide(currentSlide + 1);
       }
     }
   }
-  
-  // Animation states for synchronization
-  const [ingredientsAnimating, setIngredientsAnimating] = useState(false);
-  const [animationDirection, setAnimationDirection] = useState<1 | -1>(1);
-  const [isChangingSlide, setIsChangingSlide] = useState(false);
-  
-  // Function to change slides after animation completes
-  function changeSlide(dir: number) {
-    setDirection(dir);
-    setCurrentSlide(currentSlide + dir);
-    setIngredientsAnimating(false);
-    setIsChangingSlide(true);
-    
-    // Add a shorter delay before allowing another slide change
-    setTimeout(() => {
-      setIsChangingSlide(false);
-    }, 300); // Shorter cool-down period that won't block navigation
-  }
-  
+
   function goToPrevious() {
     if (currentSlide > 0) {
       // If we're on the ingredients slide (slide 1), trigger the animation in reverse
@@ -67,7 +173,8 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
         physicsCounterRef.current.exitAnimationPrev();
         // Animation will call changeSlide() after completion
       } else {
-        changeSlide(-1);
+        setDirection(-1);
+        setCurrentSlide(currentSlide - 1);
       }
     }
   }
@@ -81,9 +188,6 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
   // Handle keyboard navigation
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      // Add check to not process keys if the slide is changing
-      if (isChangingSlide) return;
-      
       if (e.key === 'ArrowRight') {
         goToNext();
       } else if (e.key === 'ArrowLeft') {
@@ -92,13 +196,13 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
         handleClose();
       }
     }
-    
+
     window.addEventListener('keydown', handleKeyDown);
-    
+
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [currentSlide, isChangingSlide]); // Add isChangingSlide as dependency
+  }, [currentSlide]);
   
   // Animation variants
   const slideVariants = {
@@ -194,17 +298,123 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
     };
   }, []);
 
+  // Show loading screen until all images are loaded
+  if (!allImagesLoaded) {
+    return (
+      <div
+        style={{
+          position: 'fixed',
+          inset: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: 'rgba(0, 0, 0, 0.95)',
+          backdropFilter: 'blur(10px)',
+          zIndex: 99999
+        }}
+      >
+        {/* Close button even during loading */}
+        <button
+          onClick={handleClose}
+          style={{
+            position: 'fixed',
+            top: '1rem',
+            right: '1rem',
+            zIndex: 100000,
+            width: '40px',
+            height: '40px',
+            borderRadius: '50%',
+            backgroundColor: 'rgba(255, 255, 255, 0.9)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            boxShadow: '0 2px 4px rgba(0, 0, 0, 0.2)',
+            border: 'none',
+            fontSize: '20px',
+            fontWeight: 'bold',
+            color: '#333',
+            pointerEvents: 'auto'
+          }}
+          aria-label="Close slideshow"
+        >
+          ✕
+        </button>
+
+        <div style={{ textAlign: 'center', maxWidth: '400px', padding: '2rem' }}>
+          {/* Loading spinner */}
+          <div
+            style={{
+              width: '60px',
+              height: '60px',
+              border: '4px solid rgba(255, 255, 255, 0.1)',
+              borderTopColor: 'rgba(255, 255, 255, 0.8)',
+              borderRadius: '50%',
+              animation: 'spin 1s linear infinite',
+              margin: '0 auto 2rem'
+            }}
+          />
+
+          {/* Loading text */}
+          <h2 style={{ color: 'white', fontSize: '24px', fontWeight: 600, marginBottom: '1rem' }}>
+            Loading Images...
+          </h2>
+
+          {/* Progress bar */}
+          <div
+            style={{
+              width: '100%',
+              height: '8px',
+              backgroundColor: 'rgba(255, 255, 255, 0.1)',
+              borderRadius: '4px',
+              overflow: 'hidden',
+              marginBottom: '0.5rem'
+            }}
+          >
+            <div
+              style={{
+                width: `${loadingProgress}%`,
+                height: '100%',
+                backgroundColor: '#4CAF50',
+                transition: 'width 0.3s ease',
+                borderRadius: '4px'
+              }}
+            />
+          </div>
+
+          {/* Progress percentage */}
+          <p style={{ color: 'rgba(255, 255, 255, 0.7)', fontSize: '14px', margin: 0 }}>
+            {loadingProgress}% complete
+          </p>
+        </div>
+
+        {/* Spinner animation */}
+        <style>{`
+          @keyframes spin {
+            to { transform: rotate(360deg); }
+          }
+        `}</style>
+      </div>
+    );
+  }
+
   // Render the slideshow with a special class for detection
   return (
     <>
       {/* Standalone close button outside of any container */}
       <button
-        onClick={handleClose}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          console.log('Close button clicked');
+          handleClose();
+        }}
         style={{
           position: 'fixed',
-          top: 'calc(1rem + 50px)', // Positioned below navbar
+          top: '1rem',
           right: '1rem',
-          zIndex: 9800, // High but below navbar
+          zIndex: 50000,
           width: '40px',
           height: '40px',
           borderRadius: '50%',
@@ -215,7 +425,8 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
           cursor: 'pointer',
           boxShadow: '0 2px 4px rgba(0, 0, 0, 0.2)',
           border: 'none',
-          padding: 0
+          padding: 0,
+          pointerEvents: 'auto'
         }}
         aria-label="Close slideshow"
       >
@@ -236,27 +447,26 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
           height: '100vh',
           backgroundColor: 'transparent',
           backdropFilter: 'none',
-          overflow: 'visible', // Allow content to overflow
-          pointerEvents: 'auto', // Ensure interactions work
-          marginTop: '50px' // Add space for navbar
+          overflow: 'hidden',
+          pointerEvents: 'auto'
         }}>
       {/* Removed custom background - now using the global background */}
       
-      <motion.div 
-        className="relative w-full h-full overflow-visible"
+      <motion.div
+        className="relative w-full h-full overflow-hidden"
         initial={{ y: "-100%", opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: "100%", opacity: 0 }}
-        transition={{ 
+        transition={{
           type: "spring",
           stiffness: 300,
           damping: 30,
-          duration: 0.5 
+          duration: 0.5
         }}
       >
         
         {/* Slide content */}
-        <div className="h-full relative overflow-visible flex justify-center">
+        <div className="h-full relative overflow-hidden flex justify-center">
           <div className="w-full max-w-7xl">
             <AnimatePresence initial={false} custom={direction}>
               {/* First slide - Title and basic info */}
@@ -276,7 +486,7 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
                   }}
                   className="absolute inset-0 flex flex-col w-full"
                 >
-                  <div className="flex-1 flex flex-col items-center justify-start pt-6 md:pt-10 p-12 md:p-16 text-center rounded-3xl shadow-lg m-4 mt-16 pb-32 frosted-glass">
+                  <div className="flex-1 flex flex-col items-center justify-start pt-6 md:pt-10 p-12 md:p-16 text-center pb-32">
                     <h1 className="text-5xl md:text-6xl font-bold mb-6 text-gray-800 max-w-4xl">
                       {recipe.title}
                     </h1>
@@ -331,60 +541,57 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
               )}
               
               {/* Second slide - Interactive physics-based counter with ingredients and equipment */}
-              {currentSlide === 1 && (
-                <motion.div
-                  key="ingredients-equipment-slide"
-                  custom={direction}
-                  variants={slideVariants}
-                  initial="enter"
-                  animate="center"
-                  exit="exit"
-                  transition={{ 
-                    type: 'spring', 
-                    stiffness: 300, 
-                    damping: 30,
-                    duration: 0.5 
-                  }}
-                  className="absolute inset-0 flex flex-col w-full"
-                >
-                  <div className="flex-1 flex flex-col p-4 md:p-8 h-full m-4" style={{ pointerEvents: 'auto', position: 'relative' }}>
-                    {/* Title section - black text */}
-                    <motion.div
-                      className="p-4 mb-4 ingredients-title transition-opacity duration-300" 
-                      style={{ zIndex: 1, position: 'relative', pointerEvents: 'none' }}
-                      animate={{
-                        x: ingredientsAnimating
-                          ? animationDirection === 1 
-                            ? ['0%', '5%', '4%', '-100%']
-                            : ['0%', '-5%', '-4%', '100%']
-                          : '0%'
-                      }}
-                      transition={{
-                        duration: 1.05, // Increased to match total physics animation (0.3 + 0.75)
-                        times: [0, 0.29, 0.38, 1],
-                        ease: ["easeOut", "easeOut", "easeIn"]
-                      }}
-                    >
-                      <h2 className="text-3xl font-bold text-center text-black">
-                        Ingredients & Equipment
-                      </h2>
-                      <p className="text-center text-black">
-                        Drag and interact with the items on the counter
-                      </p>
-                    </motion.div>
-                    
-                    {/* Full viewport physics container */}
-                    <div style={{ position: 'static', width: '100%', height: '100%' }}>
-                      <PhysicsCounter
-                        ref={physicsCounterRef}
-                        ingredients={recipe.ingredients}
-                        equipment={recipe.equipment}
-                        onSlideChange={(dir) => changeSlide(dir || 1)}
-                      />
-                    </div>
+              {/* Keep this mounted but hidden to preserve state */}
+              <div
+                key="ingredients-equipment-slide"
+                className="absolute inset-0 flex flex-col w-full"
+                style={{
+                  visibility: currentSlide === 1 ? 'visible' : 'hidden',
+                  pointerEvents: currentSlide === 1 ? 'auto' : 'none',
+                  zIndex: currentSlide === 1 ? 1 : -1,
+                  // No animation - keep items in place
+                  transform: 'none',
+                  opacity: 1
+                }}
+              >
+                <div className="flex-1 flex flex-col p-4 md:p-8 h-full m-4" style={{ pointerEvents: 'auto', position: 'relative' }}>
+                  {/* Title section - black text */}
+                  <motion.div
+                    className="p-4 mb-4 ingredients-title transition-opacity duration-300"
+                    style={{ zIndex: 1, position: 'relative', pointerEvents: 'none' }}
+                    animate={{
+                      x: ingredientsAnimating
+                        ? animationDirection === 1
+                          ? ['0%', '5%', '4%', '-100%']
+                          : ['0%', '-5%', '-4%', '100%']
+                        : '0%'
+                    }}
+                    transition={{
+                      duration: 1.05,
+                      times: [0, 0.29, 0.38, 1],
+                      ease: ["easeOut", "easeOut", "easeIn"]
+                    }}
+                  >
+                    <h2 className="text-3xl font-bold text-center text-black">
+                      Ingredients & Equipment
+                    </h2>
+                    <p className="text-center text-black">
+                      Drag and interact with the items on the counter
+                    </p>
+                  </motion.div>
+
+                  {/* Full viewport physics container */}
+                  <div style={{ position: 'static', width: '100%', height: '100%' }}>
+                    <PhysicsCounter
+                      ref={physicsCounterRef}
+                      ingredients={recipe.ingredients}
+                      equipment={recipe.equipment}
+                      onSlideChange={(dir) => changeSlide(dir || 1)}
+                      isVisible={currentSlide === 1}
+                    />
                   </div>
-                </motion.div>
-              )}
+                </div>
+              </div>
               
               {/* Step slides */}
               {currentSlide > 1 && (
@@ -403,21 +610,12 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
                   }}
                   className="absolute inset-0 flex flex-col md:flex-row w-full m-4"
                 >
-                  {/* Step number and animation */}
+                  {/* Step number */}
                   <div className="md:w-1/2 rounded-l-3xl shadow-lg p-10 md:p-12 flex flex-col items-center justify-center frosted-glass">
-                    <div className="w-24 h-24 bg-primary-100 rounded-full flex items-center justify-center mb-8">
-                      <span className="text-4xl font-bold text-primary-600">
+                    <div className="w-32 h-32 bg-primary-100 rounded-full flex items-center justify-center">
+                      <span className="text-5xl font-bold text-primary-600">
                         {currentSlide - 1}
                       </span>
-                    </div>
-                    
-                    <div className="w-full max-w-xl flex justify-center">
-                      <RecipeAnimation 
-                        action={recipe.steps[currentSlide - 2].action}
-                        ingredients={recipe.steps[currentSlide - 2].ingredients.map(i => i.name)}
-                        equipment={recipe.steps[currentSlide - 2].equipment.map(e => e.name)}
-                        size="large"
-                      />
                     </div>
                   </div>
                   
@@ -485,7 +683,7 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
         </div>
         
         {/* Navigation controls - with transparent background */}
-        <div className="absolute bottom-0 inset-x-0 p-4 md:p-6 flex flex-col items-center pb-6">
+        <div className="absolute bottom-0 inset-x-0 p-4 md:p-6 flex flex-col items-center pb-20">
           <div className="w-full max-w-7xl mx-auto flex flex-col items-center">
             {renderDots()}
             

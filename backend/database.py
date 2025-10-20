@@ -305,31 +305,47 @@ def execute_query_dict(query: str, params: Optional[Tuple] = None) -> List[Dict]
                     pass
             
             # Handle WHERE clauses
-            where_condition = None
+            where_conditions = []
             if "WHERE" in query.upper():
-                where_clause = query.upper().split("WHERE")[1].strip()
-                if "LIMIT" in where_clause:
+                where_clause = query.split("WHERE")[1].strip()  # Use original case for column names
+                if "LIMIT" in where_clause.upper():
                     where_clause = where_clause.split("LIMIT")[0].strip()
-                if "ORDER" in where_clause:
+                if "ORDER" in where_clause.upper():
                     where_clause = where_clause.split("ORDER")[0].strip()
-                
-                # Only handle simple equals conditions for now
-                if "=" in where_clause:
-                    parts = where_clause.split("=")
-                    if len(parts) == 2:
-                        col_name = parts[0].strip().lower()
-                        val = parts[1].strip()
-                        # Remove quotes
-                        if val.startswith("'") and val.endswith("'"):
-                            val = val[1:-1]
-                        where_condition = (col_name, val)
+
+                # Handle simple equals conditions with %s placeholders
+                if "=" in where_clause and params:
+                    # Split by AND to handle multiple conditions
+                    conditions = where_clause.split("AND")
+                    param_index = 0
+
+                    for condition in conditions:
+                        condition = condition.strip()
+                        if "=" in condition:
+                            parts = condition.split("=")
+                            if len(parts) == 2:
+                                col_name = parts[0].strip().lower()
+                                val_placeholder = parts[1].strip()
+
+                                # If using %s placeholder, get value from params
+                                if "%s" in val_placeholder and param_index < len(params):
+                                    val = params[param_index]
+                                    param_index += 1
+                                else:
+                                    # Try to parse literal value
+                                    val = val_placeholder
+                                    # Remove quotes
+                                    if val.startswith("'") and val.endswith("'"):
+                                        val = val[1:-1]
+
+                                where_conditions.append((col_name, val))
             
             # Construct and execute the query
             supabase_query = supabase_client.table(table_name).select('*')
-            
-            # Apply WHERE if present
-            if where_condition:
-                supabase_query = supabase_query.eq(where_condition[0], where_condition[1])
+
+            # Apply WHERE conditions if present
+            for col_name, val in where_conditions:
+                supabase_query = supabase_query.eq(col_name, val)
             
             # Apply LIMIT and OFFSET
             if limit:
