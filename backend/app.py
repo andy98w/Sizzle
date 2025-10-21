@@ -10,7 +10,6 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-import setup_env
 from config import API_CORS_ORIGINS, API_DEBUG, STATIC_DIR, TEMP_DIR, OPENAI_API_KEY, OCI_BUCKET_NAME
 from utils import logger, format_api_response, format_error_response, format_oci_url, log_exception
 from database import get_database_status, execute_query_dict, execute_query_dict_single_row, supabase_client
@@ -265,10 +264,32 @@ async def parse_recipe(query: RecipeQuery):
             detail=f"Failed to parse recipe: {str(e)}"
         )
 
+# Recipe generation endpoint
+@app.post("/recipe/generate")
+async def generate_recipe(query: RecipeQuery):
+    """Generate a new recipe using AI"""
+    try:
+        logger.info(f"Generating new recipe for: {query.query}")
+        recipe_data = recipe_assistant.generate_recipe(query.query)
+
+        if not recipe_data:
+            raise HTTPException(
+                status_code=500,
+                detail="Could not generate a recipe for the given query"
+            )
+
+        return format_api_response(recipe_data)
+    except Exception as e:
+        log_exception(e, "Error generating recipe")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate recipe: {str(e)}"
+        )
+
 # Recipe search endpoint
 @app.get("/recipes")
 async def list_recipes(
-    limit: int = 10, 
+    limit: int = 10,
     offset: int = 0,
     search: Optional[str] = None
 ):

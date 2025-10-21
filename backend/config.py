@@ -6,6 +6,10 @@ This module loads configuration values from environment variables.
 
 import os
 from typing import List
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # API Configuration
 API_HOST = os.environ.get('API_HOST', '0.0.0.0')

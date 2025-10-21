@@ -82,7 +82,7 @@ const IngredientImage = ({ imageUrl, name }: { imageUrl: string, name: string })
   // Remove spaces from URL to prevent breaking Oracle Cloud PAR tokens
   const cleanedUrl = imageSrc.replace(/\s+/g, '');
 
-  const placeholderUrl = 'http://localhost:8000/static/images/ingredients_clean/placeholder_ingredient.png';
+  const placeholderUrl = 'https://objectstorage.ca-toronto-1.oraclecloud.com/p/u4hPf1DL-E9utS-Mh6HXZFsLBXFSzqUlgsrBJsWpjxxkz1Udy_-g3wveTokFV5G6/n/yzep9haqilyk/b/SizzleGeneratedImages/o/placeholder_ingredient.png';
 
   const handleImageError = (e: React.SyntheticEvent<HTMLImageElement, Event>) => {
     const target = e.target as HTMLImageElement;

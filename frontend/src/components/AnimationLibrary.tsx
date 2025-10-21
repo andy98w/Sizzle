@@ -64,8 +64,8 @@ export const getIngredientImageUrl = async (ingredientName: string): Promise<str
           }
         }
 
-        // 3. Contains search term (fallback)
-        if (!containsMatch && ingredientLower.includes(ingredientNameLower)) {
+        // 3. Contains search term (bidirectional - either can contain the other)
+        if (!containsMatch && (ingredientLower.includes(ingredientNameLower) || ingredientNameLower.includes(ingredientLower))) {
           containsMatch = ingredient;
         }
       }
@@ -81,15 +81,15 @@ export const getIngredientImageUrl = async (ingredientName: string): Promise<str
     }
     
     // Return placeholder if no match found
-    const placeholder = "https://objectstorage.ca-toronto-1.oraclecloud.com/p/u4hPf1DL-E9utS-Mh6HXZFsLBXFSzqUlgsrBJsWpjxxkz1Udy_-g3wveTokFV5G6/n/yzep9haqilyk/b/SizzleGeneratedImages/o/ingredients/placeholder.png";
+    const placeholder = "https://objectstorage.ca-toronto-1.oraclecloud.com/p/LHruGKILbQNvy2_V89soZbDGmCXZ-RecXxEAAzoKdZx1y9Tcuz0J-gEmWtIcNZhJ/n/yzep9haqilyk/b/SizzleGeneratedImages/o/placeholder_ingredient.png";
     ingredientCache[ingredientName] = placeholder;
     return placeholder;
-    
+
   } catch (error) {
     console.error(`Error fetching ingredient image for ${ingredientName}:`, error);
-    
+
     // Return placeholder on error
-    const placeholder = "https://objectstorage.ca-toronto-1.oraclecloud.com/p/u4hPf1DL-E9utS-Mh6HXZFsLBXFSzqUlgsrBJsWpjxxkz1Udy_-g3wveTokFV5G6/n/yzep9haqilyk/b/SizzleGeneratedImages/o/ingredients/placeholder.png";
+    const placeholder = "https://objectstorage.ca-toronto-1.oraclecloud.com/p/LHruGKILbQNvy2_V89soZbDGmCXZ-RecXxEAAzoKdZx1y9Tcuz0J-gEmWtIcNZhJ/n/yzep9haqilyk/b/SizzleGeneratedImages/o/placeholder_ingredient.png";
     ingredientCache[ingredientName] = placeholder;
     return placeholder;
   }
@@ -359,43 +359,24 @@ export const IngredientVisual: React.FC<{
         </div>
       );
     }
-    
-    if (imageUrl) {
-      // Full URL handling - OCI URL or local URL
-      const fullUrl = imageUrl.startsWith('http') ? 
-                      imageUrl : 
-                      `${API_URL}${imageUrl.startsWith('/') ? '' : '/'}${imageUrl}`;
-      
-      return (
-        <img 
-          src={fullUrl}
-          alt={ingredient}
-          className="w-10 h-10 rounded-full object-cover mr-3"
-          onError={(e) => {
-            // If image fails to load, use placeholder
-            const target = e.target as HTMLImageElement;
-            // Try to use a placeholder from the OCI bucket
-            const placeholder = "https://objectstorage.ca-toronto-1.oraclecloud.com/p/u4hPf1DL-E9utS-Mh6HXZFsLBXFSzqUlgsrBJsWpjxxkz1Udy_-g3wveTokFV5G6/n/yzep9haqilyk/b/SizzleGeneratedImages/o/ingredients/placeholder.png";
-            target.src = placeholder;
-            target.onerror = () => {
-              // If placeholder also fails, hide the image
-              target.style.display = 'none';
-            };
-          }}
-        />
-      );
-    }
-    
-    // Fallback to placeholder image
+
+    // Always show an image - either the actual image or placeholder
+    const placeholder = "https://objectstorage.ca-toronto-1.oraclecloud.com/p/LHruGKILbQNvy2_V89soZbDGmCXZ-RecXxEAAzoKdZx1y9Tcuz0J-gEmWtIcNZhJ/n/yzep9haqilyk/b/SizzleGeneratedImages/o/placeholder_ingredient.png";
+    const fullUrl = imageUrl ?
+      (imageUrl.startsWith('http') ? imageUrl : `${API_URL}${imageUrl.startsWith('/') ? '' : '/'}${imageUrl}`) :
+      placeholder;
+
     return (
       <img
-        src="https://objectstorage.ca-toronto-1.oraclecloud.com/p/u4hPf1DL-E9utS-Mh6HXZFsLBXFSzqUlgsrBJsWpjxxkz1Udy_-g3wveTokFV5G6/n/yzep9haqilyk/b/SizzleGeneratedImages/o/ingredients/placeholder.png"
+        src={fullUrl}
         alt={ingredient}
         className="w-10 h-10 rounded-full object-cover mr-3"
         onError={(e) => {
-          // Hide if placeholder also fails
           const target = e.target as HTMLImageElement;
-          target.style.display = 'none';
+          // Always fall back to placeholder, never hide
+          if (target.src !== placeholder) {
+            target.src = placeholder;
+          }
         }}
       />
     );
@@ -475,8 +456,8 @@ export const getEquipmentImageUrl = async (equipmentName: string): Promise<strin
           }
         }
 
-        // 3. Contains search term (fallback)
-        if (!containsMatch && itemLower.includes(equipmentNameLower)) {
+        // 3. Contains search term (bidirectional - either can contain the other)
+        if (!containsMatch && (itemLower.includes(equipmentNameLower) || equipmentNameLower.includes(itemLower))) {
           containsMatch = item;
         }
       }
@@ -492,15 +473,15 @@ export const getEquipmentImageUrl = async (equipmentName: string): Promise<strin
     }
     
     // Return placeholder if no match found
-    const placeholder = "https://objectstorage.ca-toronto-1.oraclecloud.com/p/u4hPf1DL-E9utS-Mh6HXZFsLBXFSzqUlgsrBJsWpjxxkz1Udy_-g3wveTokFV5G6/n/yzep9haqilyk/b/SizzleGeneratedImages/o/equipment/placeholder.png";
+    const placeholder = "https://objectstorage.ca-toronto-1.oraclecloud.com/p/LHruGKILbQNvy2_V89soZbDGmCXZ-RecXxEAAzoKdZx1y9Tcuz0J-gEmWtIcNZhJ/n/yzep9haqilyk/b/SizzleGeneratedImages/o/placeholder_equipment.png";
     equipmentCache[equipmentName] = placeholder;
     return placeholder;
-    
+
   } catch (error) {
     console.error(`Error fetching equipment image for ${equipmentName}:`, error);
-    
+
     // Return placeholder on error
-    const placeholder = "https://objectstorage.ca-toronto-1.oraclecloud.com/p/u4hPf1DL-E9utS-Mh6HXZFsLBXFSzqUlgsrBJsWpjxxkz1Udy_-g3wveTokFV5G6/n/yzep9haqilyk/b/SizzleGeneratedImages/o/equipment/placeholder.png";
+    const placeholder = "https://objectstorage.ca-toronto-1.oraclecloud.com/p/LHruGKILbQNvy2_V89soZbDGmCXZ-RecXxEAAzoKdZx1y9Tcuz0J-gEmWtIcNZhJ/n/yzep9haqilyk/b/SizzleGeneratedImages/o/placeholder_equipment.png";
     equipmentCache[equipmentName] = placeholder;
     return placeholder;
   }
@@ -589,43 +570,24 @@ export const EquipmentVisual: React.FC<{
         </div>
       );
     }
-    
-    if (imageUrl) {
-      // Full URL handling - OCI URL or local URL
-      const fullUrl = imageUrl.startsWith('http') ? 
-                      imageUrl : 
-                      `${API_URL}${imageUrl.startsWith('/') ? '' : '/'}${imageUrl}`;
-      
-      return (
-        <img 
-          src={fullUrl}
-          alt={equipment}
-          className="w-10 h-10 rounded-full object-cover mr-3"
-          onError={(e) => {
-            // If image fails to load, use placeholder
-            const target = e.target as HTMLImageElement;
-            // Try to use a placeholder from the OCI bucket
-            const placeholder = "https://objectstorage.ca-toronto-1.oraclecloud.com/p/u4hPf1DL-E9utS-Mh6HXZFsLBXFSzqUlgsrBJsWpjxxkz1Udy_-g3wveTokFV5G6/n/yzep9haqilyk/b/SizzleGeneratedImages/o/equipment/placeholder.png";
-            target.src = placeholder;
-            target.onerror = () => {
-              // If placeholder also fails, hide the image
-              target.style.display = 'none';
-            };
-          }}
-        />
-      );
-    }
-    
-    // Fallback to placeholder image
+
+    // Always show an image - either the actual image or placeholder
+    const placeholder = "https://objectstorage.ca-toronto-1.oraclecloud.com/p/LHruGKILbQNvy2_V89soZbDGmCXZ-RecXxEAAzoKdZx1y9Tcuz0J-gEmWtIcNZhJ/n/yzep9haqilyk/b/SizzleGeneratedImages/o/placeholder_equipment.png";
+    const fullUrl = imageUrl ?
+      (imageUrl.startsWith('http') ? imageUrl : `${API_URL}${imageUrl.startsWith('/') ? '' : '/'}${imageUrl}`) :
+      placeholder;
+
     return (
       <img
-        src="https://objectstorage.ca-toronto-1.oraclecloud.com/p/u4hPf1DL-E9utS-Mh6HXZFsLBXFSzqUlgsrBJsWpjxxkz1Udy_-g3wveTokFV5G6/n/yzep9haqilyk/b/SizzleGeneratedImages/o/equipment/placeholder.png"
+        src={fullUrl}
         alt={equipment}
         className="w-10 h-10 rounded-full object-cover mr-3"
         onError={(e) => {
-          // Hide if placeholder also fails
           const target = e.target as HTMLImageElement;
-          target.style.display = 'none';
+          // Always fall back to placeholder, never hide
+          if (target.src !== placeholder) {
+            target.src = placeholder;
+          }
         }}
       />
     );

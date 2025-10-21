@@ -10,10 +10,6 @@ import json
 import re
 from typing import List, Dict, Any, Optional
 
-# Local imports
-from setup_env import setup_virtual_env
-setup_virtual_env()
-
 # Import from third-party libraries
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
@@ -49,154 +45,96 @@ class RecipeAssistant:
         # Initialize chat history
         self.chat_history = []
         
-        # Setup the recipe generation prompt
+        # Setup the recipe generation prompt - single step JSON generation
         self.recipe_prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are an expert chef and cooking instructor who provides detailed, structured recipes.
+            ("system", """You are an expert chef and cooking instructor. Generate detailed, accurate recipes in JSON format.
 
-            When asked about a recipe, always respond with this exact format (without any introduction or conclusion):
+IMPORTANT: Respond with ONLY valid JSON. No markdown, no code blocks, no explanation - just the JSON object.
 
-            # [Recipe Title]
+Use this exact structure:
+{{
+  "title": "Recipe Name",
+  "description": "Brief 1-2 sentence description of the dish",
+  "prep_time": "X mins",
+  "cook_time": "X mins",
+  "servings": 4,
+  "ingredients": [
+    {{"name": "Ingredient Name", "quantity": "Amount with unit"}},
+    {{"name": "Water", "quantity": "2 cups"}}
+  ],
+  "equipment": [
+    {{"name": "Equipment Name"}},
+    {{"name": "Large bowl"}}
+  ],
+  "steps": [
+    {{
+      "id": 1,
+      "instruction": "Clear, detailed instruction for this step",
+      "ingredients": [
+        {{"name": "Ingredient used", "quantity": "Amount"}}
+      ],
+      "equipment": [
+        {{"name": "Equipment used"}}
+      ]
+    }}
+  ]
+}}
 
-            ## Equipment
-            - [Equipment item 1]
-            - [Equipment item 2]
-            - ...
+CRITICAL GUIDELINES:
+1. Ingredient Names: Use simple, common names (e.g., "Rice" not "Japanese short-grain rice", "Salt" not "Sea salt")
+2. Equipment Names: Use generic names (e.g., "Bowl" not "Large wooden bowl", "Pot" not "3-quart saucepan")
+3. Steps: Each step should be clear and actionable. Only include ingredients/equipment actually used in that specific step.
+4. Quantities: Always include units (cups, tbsp, tsp, oz, g, etc.)
+5. Servings: Must be an integer number
+6. Times: Format as "X mins" or "X hours" (e.g., "15 mins", "1 hour", "2 hours 30 mins")
 
-            ## Ingredients
-            - [Quantity] [Ingredient 1]
-            - [Quantity] [Ingredient 2]
-            - ...
-
-            ## Preparation Time
-            [Time in minutes or hours]
-
-            ## Cooking Time
-            [Time in minutes or hours]
-
-            ## Servings
-            [Number of servings]
-
-            ## Instructions
-            1. [Step 1 instruction]
-               Action: [Main cooking action]
-               Ingredients: [Ingredients used in step]
-               Equipment: [Equipment used in step]
-            
-            2. [Step 2 instruction]
-               Action: [Main cooking action]
-               Ingredients: [Ingredients used in step]
-               Equipment: [Equipment used in step]
-            
-            ...and so on for all steps.
-
-            ## Description
-            [Brief description of the dish and its origins or characteristics]
-            
-            Remember, actions should be concise (single word or short phrase) like "chop", "mix", "bake", "stir", etc. Each step should only include ingredients and equipment actually used in that step.
-            """),
+OUTPUT ONLY THE JSON OBJECT."""),
             MessagesPlaceholder(variable_name="chat_history"),
             ("human", "{recipe_query}")
-        ])
-        
-        # Setup the JSON conversion prompt
-        self.json_prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are a helpful AI assistant that converts recipe text into JSON format.
-            
-            Convert the recipe text into a valid JSON object with this structure:
-            
-            {{
-              "title": "Recipe Title",
-              "equipment": [
-                {{"name": "Equipment item 1"}},
-                {{"name": "Equipment item 2"}}
-              ],
-              "ingredients": [
-                {{"name": "Ingredient 1", "quantity": "Amount"}},
-                {{"name": "Ingredient 2", "quantity": "Amount"}}
-              ],
-              "prep_time": "Preparation time",
-              "cook_time": "Cooking time",
-              "servings": 4,
-              "steps": [
-                {{
-                  "id": 1,
-                  "instruction": "Step instruction",
-                  "action": "Main cooking action (single word or short phrase)",
-                  "ingredients": [
-                    {{"name": "Ingredient used", "quantity": "Amount used (if specified)"}}
-                  ],
-                  "equipment": [
-                    {{"name": "Equipment used"}}
-                  ]
-                }}
-              ],
-              "description": "Recipe description"
-            }}
-            
-            Important notes:
-            1. Only include ingredients and equipment actually used in each step
-            2. Actions should be concise verbs like "chop", "mix", "bake"
-            3. For servings, convert text to an integer
-            4. Make sure all nested arrays have the correct structure
-            5. Ensure the JSON is valid - use double quotes for keys and string values
-            6. Output ONLY the JSON object with no additional text or explanation
-            """),
-            ("human", "{recipe_text}\n\nTitle: {title}")
         ])
     
     def generate_recipe(self, query: str) -> Dict[str, Any]:
         """
         Generate a structured recipe from a user query.
-        
+
         Args:
             query: User query for a recipe
-            
+
         Returns:
             Structured recipe data as a dictionary
         """
         if not self.api_key:
             logger.error("Cannot generate recipe: OpenAI API key is not set")
             return None
-            
+
         try:
-            # Generate the recipe in markdown format
+            # Generate the recipe directly as JSON in a single call
             recipe_chain = self.recipe_prompt | self.llm
-            recipe_text = recipe_chain.invoke({
+            json_text = recipe_chain.invoke({
                 "recipe_query": query,
                 "chat_history": self.chat_history
             }).content
-            
-            # Extract title from recipe text
-            title_match = re.search(r'^# (.+?)$', recipe_text, re.MULTILINE)
-            title = title_match.group(1) if title_match else "Recipe"
-            
-            # Convert the markdown to JSON
-            json_chain = self.json_prompt | self.llm
-            json_text = json_chain.invoke({
-                "recipe_text": recipe_text,
-                "title": title
-            }).content
-            
+
             # Parse the JSON
             try:
                 # Clean up the response to ensure it's valid JSON
-                # Remove any markdown code block markers
-                json_text = re.sub(r'^```json\s*', '', json_text)
-                json_text = re.sub(r'\s*```$', '', json_text)
-                
+                # Remove any markdown code block markers if present
+                json_text = re.sub(r'^```json\s*', '', json_text.strip())
+                json_text = re.sub(r'^```\s*', '', json_text.strip())
+                json_text = re.sub(r'\s*```$', '', json_text.strip())
+
                 # Parse the JSON
                 recipe_data = json.loads(json_text)
-                
+
                 # Ensure the data has the required structure
                 self._validate_recipe_data(recipe_data)
-                
-                # Search for matching recipes (for demo purposes, return one recipe)
+
                 return {
                     "matching_recipes": [recipe_data]
                 }
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse recipe JSON: {str(e)}")
-                logger.debug(f"Raw JSON: {json_text}")
+                logger.error(f"Raw response: {json_text[:500]}...")
                 return None
         except Exception as e:
             log_exception(e, "Error generating recipe")
@@ -231,9 +169,7 @@ class RecipeAssistant:
                 step["id"] = i + 1
             if "instruction" not in step:
                 raise ValueError(f"Step {i+1} missing required field: instruction")
-            if "action" not in step:
-                raise ValueError(f"Step {i+1} missing required field: action")
-            
+
             # Ensure step has ingredients and equipment lists
             if "ingredients" not in step:
                 step["ingredients"] = []

@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { FaArrowLeft, FaArrowRight, FaClock, FaUser } from 'react-icons/fa';
-import { RecipeAnimation, IngredientVisual, EquipmentVisual } from './AnimationLibrary';
+import { RecipeAnimation, IngredientVisual, EquipmentVisual, getIngredientImageUrl, getEquipmentImageUrl } from './AnimationLibrary';
 import { Recipe, RecipeStep, Ingredient, Equipment } from '@/types';
-import PhysicsCounter from './PhysicsCounter';
+import PhysicsCounter from './PhysicsCounterMatterJS';
 import { getImageUrl } from '@/utils';
 
 interface SlideshowRecipeProps {
@@ -31,54 +31,108 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
   const [ingredientsAnimating, setIngredientsAnimating] = useState(false);
   const [animationDirection, setAnimationDirection] = useState<1 | -1>(1);
 
+  // Store enriched recipe with URLs populated
+  const [enrichedRecipe, setEnrichedRecipe] = useState(recipe);
+
   // Preload only the images needed for THIS recipe
   useEffect(() => {
     const preloadAllImages = async () => {
       try {
+        console.log('🔄 Starting image preload for recipe:', recipe.title);
         const imagesToPreload: string[] = [];
 
-        // Collect ingredient images from recipe
-        if (recipe.ingredients) {
-          recipe.ingredients.forEach((ingredient: any) => {
-            if (ingredient.url || ingredient.imageUrl) {
-              imagesToPreload.push(ingredient.url || ingredient.imageUrl);
+        // Create a deep copy of recipe to enrich with URLs
+        const recipeClone = JSON.parse(JSON.stringify(recipe));
+
+        // Collect ingredient images from recipe - fetch URLs if needed
+        if (recipeClone.ingredients) {
+          console.log(`📦 Fetching URLs for ${recipeClone.ingredients.length} recipe ingredients`);
+          for (let i = 0; i < recipeClone.ingredients.length; i++) {
+            const ingredient = recipeClone.ingredients[i];
+            let url = ingredient.url || ingredient.imageUrl;
+            if (!url && ingredient.name) {
+              // Fetch from database
+              console.log(`🔍 Fetching URL for ingredient: ${ingredient.name}`);
+              url = await getIngredientImageUrl(ingredient.name);
+              // Store URL in the cloned object
+              recipeClone.ingredients[i].imageUrl = url;
             }
-          });
+            if (url) {
+              imagesToPreload.push(url);
+              console.log(`✅ Added ingredient image: ${ingredient.name}`);
+            }
+          }
         }
 
-        // Collect equipment images from recipe
-        if (recipe.equipment) {
-          recipe.equipment.forEach((equipment: any) => {
-            if (equipment.url || equipment.imageUrl) {
-              imagesToPreload.push(equipment.url || equipment.imageUrl);
+        // Collect equipment images from recipe - fetch URLs if needed
+        if (recipeClone.equipment) {
+          console.log(`🔧 Fetching URLs for ${recipeClone.equipment.length} recipe equipment`);
+          for (let i = 0; i < recipeClone.equipment.length; i++) {
+            const equipment = recipeClone.equipment[i];
+            let url = equipment.url || equipment.imageUrl;
+            if (!url && equipment.name) {
+              // Fetch from database
+              console.log(`🔍 Fetching URL for equipment: ${equipment.name}`);
+              url = await getEquipmentImageUrl(equipment.name);
+              // Store URL in the cloned object
+              recipeClone.equipment[i].imageUrl = url;
             }
-          });
+            if (url) {
+              imagesToPreload.push(url);
+              console.log(`✅ Added equipment image: ${equipment.name}`);
+            }
+          }
         }
 
-        // Collect images from recipe steps
-        if (recipe.steps) {
-          recipe.steps.forEach((step: any) => {
+        // Collect images from recipe steps - fetch URLs if needed
+        if (recipeClone.steps) {
+          console.log(`📝 Processing ${recipeClone.steps.length} recipe steps`);
+          for (let stepIdx = 0; stepIdx < recipeClone.steps.length; stepIdx++) {
+            const step = recipeClone.steps[stepIdx];
             if (step.ingredients) {
-              step.ingredients.forEach((ingredient: any) => {
-                if (ingredient.url || ingredient.imageUrl) {
-                  imagesToPreload.push(ingredient.url || ingredient.imageUrl);
+              for (let i = 0; i < step.ingredients.length; i++) {
+                const ingredient = step.ingredients[i];
+                let url = ingredient.url || ingredient.imageUrl;
+                if (!url && ingredient.name) {
+                  // Fetch from database
+                  console.log(`🔍 Fetching URL for step ingredient: ${ingredient.name}`);
+                  url = await getIngredientImageUrl(ingredient.name);
+                  // Store URL in the cloned object
+                  recipeClone.steps[stepIdx].ingredients[i].imageUrl = url;
                 }
-              });
+                if (url) {
+                  imagesToPreload.push(url);
+                }
+              }
             }
             if (step.equipment) {
-              step.equipment.forEach((equipment: any) => {
-                if (equipment.url || equipment.imageUrl) {
-                  imagesToPreload.push(equipment.url || equipment.imageUrl);
+              for (let i = 0; i < step.equipment.length; i++) {
+                const equipment = step.equipment[i];
+                let url = equipment.url || equipment.imageUrl;
+                if (!url && equipment.name) {
+                  // Fetch from database
+                  console.log(`🔍 Fetching URL for step equipment: ${equipment.name}`);
+                  url = await getEquipmentImageUrl(equipment.name);
+                  // Store URL in the cloned object
+                  recipeClone.steps[stepIdx].equipment[i].imageUrl = url;
                 }
-              });
+                if (url) {
+                  imagesToPreload.push(url);
+                }
+              }
             }
-          });
+          }
         }
+
+        // Update enriched recipe state
+        setEnrichedRecipe(recipeClone);
 
         // Remove duplicates
         const uniqueImages = [...new Set(imagesToPreload)].filter(url => url);
+        console.log(`📋 Total unique images to preload: ${uniqueImages.length}`);
 
         if (uniqueImages.length === 0) {
+          console.log('⚠️ No images to preload');
           setAllImagesLoaded(true);
           setLoadingProgress(100);
           return;
@@ -90,6 +144,7 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
 
         for (let i = 0; i < uniqueImages.length; i += BATCH_SIZE) {
           const batch = uniqueImages.slice(i, i + BATCH_SIZE);
+          console.log(`⏳ Loading batch ${Math.floor(i / BATCH_SIZE) + 1} (${batch.length} images)`);
 
           const batchPromises = batch.map(url => {
             return new Promise<void>((resolve) => {
@@ -99,6 +154,7 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
                 loadedCount++;
                 const progress = Math.round((loadedCount / uniqueImages.length) * 100);
                 setLoadingProgress(progress);
+                console.log(`✓ Loaded ${loadedCount}/${uniqueImages.length} (${progress}%)`);
                 resolve();
               };
 
@@ -118,8 +174,10 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
           await Promise.all(batchPromises);
         }
 
+        console.log('🎉 All images preloaded successfully!');
         setAllImagesLoaded(true);
       } catch (error) {
+        console.error('❌ Error during image preloading:', error);
         setAllImagesLoaded(true);
         setLoadingProgress(100);
       }
@@ -296,8 +354,7 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
           flexDirection: 'column',
           alignItems: 'center',
           justifyContent: 'center',
-          backgroundColor: 'rgba(0, 0, 0, 0.95)',
-          backdropFilter: 'blur(10px)',
+          backgroundColor: 'white',
           zIndex: 99999
         }}
       >
@@ -312,12 +369,12 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
             width: '40px',
             height: '40px',
             borderRadius: '50%',
-            backgroundColor: 'rgba(255, 255, 255, 0.9)',
+            backgroundColor: 'rgba(0, 0, 0, 0.05)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             cursor: 'pointer',
-            boxShadow: '0 2px 4px rgba(0, 0, 0, 0.2)',
+            boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)',
             border: 'none',
             fontSize: '20px',
             fontWeight: 'bold',
@@ -329,51 +386,19 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
           ✕
         </button>
 
-        <div style={{ textAlign: 'center', maxWidth: '400px', padding: '2rem' }}>
+        <div style={{ textAlign: 'center' }}>
           {/* Loading spinner */}
           <div
             style={{
               width: '60px',
               height: '60px',
-              border: '4px solid rgba(255, 255, 255, 0.1)',
-              borderTopColor: 'rgba(255, 255, 255, 0.8)',
+              border: '4px solid rgba(34, 197, 94, 0.2)',
+              borderTopColor: 'rgb(34, 197, 94)',
               borderRadius: '50%',
               animation: 'spin 1s linear infinite',
-              margin: '0 auto 2rem'
+              margin: '0 auto'
             }}
           />
-
-          {/* Loading text */}
-          <h2 style={{ color: 'white', fontSize: '24px', fontWeight: 600, marginBottom: '1rem' }}>
-            Loading Images...
-          </h2>
-
-          {/* Progress bar */}
-          <div
-            style={{
-              width: '100%',
-              height: '8px',
-              backgroundColor: 'rgba(255, 255, 255, 0.1)',
-              borderRadius: '4px',
-              overflow: 'hidden',
-              marginBottom: '0.5rem'
-            }}
-          >
-            <div
-              style={{
-                width: `${loadingProgress}%`,
-                height: '100%',
-                backgroundColor: '#4CAF50',
-                transition: 'width 0.3s ease',
-                borderRadius: '4px'
-              }}
-            />
-          </div>
-
-          {/* Progress percentage */}
-          <p style={{ color: 'rgba(255, 255, 255, 0.7)', fontSize: '14px', margin: 0 }}>
-            {loadingProgress}% complete
-          </p>
         </div>
 
         {/* Spinner animation */}
@@ -571,8 +596,8 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
                   <div style={{ position: 'static', width: '100%', height: '100%' }}>
                     <PhysicsCounter
                       ref={physicsCounterRef}
-                      ingredients={recipe.ingredients}
-                      equipment={recipe.equipment}
+                      ingredients={enrichedRecipe.ingredients}
+                      equipment={enrichedRecipe.equipment}
                       onSlideChange={(dir) => changeSlide(dir || 1)}
                       isVisible={currentSlide === 1}
                     />
@@ -597,10 +622,19 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
                   }}
                   className="absolute inset-0 flex flex-col md:flex-row w-full m-4"
                 >
-                  {/* Step number */}
-                  <div className="md:w-1/2 p-10 md:p-12 flex flex-col items-center justify-center" style={{ backgroundColor: 'transparent', border: 'none' }}>
-                    <div className="w-32 h-32 bg-primary-100 rounded-full flex items-center justify-center">
-                      <span className="text-5xl font-bold text-primary-600">
+                  {/* Physics counter with ONLY this step's ingredients/equipment on the left */}
+                  <div className="md:w-1/2 relative" style={{ backgroundColor: 'transparent', border: 'none' }}>
+                    {/* Full viewport physics container - same as slide 2 */}
+                    <div style={{ position: 'static', width: '100%', height: '100%' }}>
+                      <PhysicsCounter
+                        ingredients={enrichedRecipe.steps[currentSlide - 2].ingredients}
+                        equipment={enrichedRecipe.steps[currentSlide - 2].equipment}
+                        isVisible={currentSlide > 1}
+                      />
+                    </div>
+                    {/* Step number overlay */}
+                    <div className="absolute top-4 left-4 w-20 h-20 bg-primary-100 rounded-full flex items-center justify-center z-[60000] pointer-events-none">
+                      <span className="text-4xl font-bold text-primary-600">
                         {currentSlide - 1}
                       </span>
                     </div>

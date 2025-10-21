@@ -7,35 +7,33 @@ import RecipeTitle from '@/components/RecipeTitle';
 import { FaPlay, FaClock, FaUser } from 'react-icons/fa';
 import Link from 'next/link';
 
-// Sample recipe data for demonstration
+// Sample recipe data - AI generated sushi rice recipe
 const sampleRecipe = {
   id: 1,
   title: 'Sushi Rice',
-  description: 'Perfect sushi rice for making your favorite sushi rolls.',
+  description: 'Perfectly seasoned and sticky rice for making sushi or serving alongside Japanese dishes.',
   prepTime: '10 mins',
   cookTime: '20 mins',
   servings: 4,
   ingredients: [
-    { name: 'Japanese short-grain rice', quantity: '2 cups' },
+    { name: 'Rice', quantity: '2 cups' },
     { name: 'Water', quantity: '2 cups' },
     { name: 'Rice vinegar', quantity: '1/4 cup' },
-    { name: 'Sugar', quantity: '2 tablespoons' },
-    { name: 'Salt', quantity: '1 teaspoon' }
+    { name: 'Sugar', quantity: '2 tbsp' },
+    { name: 'Salt', quantity: '1 tsp' }
   ],
   equipment: [
-    { name: 'Rice cooker' },
-    { name: 'Wooden spoon' },
-    { name: 'Large bowl' },
-    { name: 'Fan (optional)' }
+    { name: 'Pot' },
+    { name: 'Bowl' },
+    { name: 'Saucepan' },
+    { name: 'Spoon' }
   ],
   steps: [
     {
       id: 1,
-      instruction: 'Rinse the rice in cold water until the water runs clear, about 2-3 times.',
-      action: 'stir',
+      instruction: 'Rinse the rice under cold water until the water runs clear.',
       ingredients: [
-        { name: 'Japanese short-grain rice', quantity: '2 cups' },
-        { name: 'Water' }
+        { name: 'Rice', quantity: '2 cups' }
       ],
       equipment: [
         { name: 'Large bowl' }
@@ -43,65 +41,59 @@ const sampleRecipe = {
     },
     {
       id: 2,
-      instruction: 'Add the rinsed rice and 2 cups of water to the rice cooker and cook according to the manufacturer\'s instructions.',
-      action: 'cook_rice',
+      instruction: 'Combine the rinsed rice and water in a pot and bring to a boil over medium heat.',
       ingredients: [
-        { name: 'Japanese short-grain rice' },
+        { name: 'Rice', quantity: '2 cups' },
         { name: 'Water', quantity: '2 cups' }
       ],
       equipment: [
-        { name: 'Rice cooker' }
+        { name: 'Pot' }
       ]
     },
     {
       id: 3,
-      instruction: 'In a small bowl, mix the rice vinegar, sugar, and salt until the sugar and salt are dissolved.',
-      action: 'stir',
-      ingredients: [
-        { name: 'Rice vinegar', quantity: '1/4 cup' },
-        { name: 'Sugar', quantity: '2 tablespoons' },
-        { name: 'Salt', quantity: '1 teaspoon' }
-      ],
+      instruction: 'Once boiling, reduce the heat to low, cover the pot, and simmer for 15 mins until the water is absorbed.',
+      ingredients: [],
       equipment: [
-        { name: 'Small bowl' },
-        { name: 'Whisk' }
+        { name: 'Pot' }
       ]
     },
     {
       id: 4,
-      instruction: 'Once the rice is cooked, transfer it to a large wooden bowl and pour the vinegar mixture over it.',
-      action: 'stir',
-      ingredients: [
-        { name: 'Cooked rice' },
-        { name: 'Vinegar mixture' }
-      ],
+      instruction: 'Remove the pot from heat and let the rice rest, covered, for 10 mins.',
+      ingredients: [],
       equipment: [
-        { name: 'Large wooden bowl' },
-        { name: 'Wooden spoon' }
+        { name: 'Pot' }
       ]
     },
     {
       id: 5,
-      instruction: 'Gently fold the rice with a wooden spoon to mix the vinegar mixture evenly. Be careful not to mash the rice.',
-      action: 'stir',
+      instruction: 'While the rice rests, heat rice vinegar, sugar, and salt in a small saucepan over low heat until the sugar is dissolved.',
       ingredients: [
-        { name: 'Seasoned rice' }
+        { name: 'Rice vinegar', quantity: '1/4 cup' },
+        { name: 'Sugar', quantity: '2 tbsp' },
+        { name: 'Salt', quantity: '1 tsp' }
       ],
       equipment: [
-        { name: 'Wooden spoon' }
+        { name: 'Small saucepan' }
       ]
     },
     {
       id: 6,
-      instruction: 'Fan the rice as you mix it to cool it down quickly and give it a nice shine.',
-      action: 'stir',
+      instruction: 'Transfer the cooked rice to a large bowl and gently fold in the vinegar mixture with a wooden spoon.',
       ingredients: [
-        { name: 'Seasoned rice' }
+        { name: 'Rice' }
       ],
       equipment: [
-        { name: 'Fan (optional)' },
+        { name: 'Large bowl' },
         { name: 'Wooden spoon' }
       ]
+    },
+    {
+      id: 7,
+      instruction: 'Allow the seasoned rice to cool to room temperature before using in sushi.',
+      ingredients: [],
+      equipment: []
     }
   ]
 };
