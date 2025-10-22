@@ -106,14 +106,17 @@ export default function AnimatedRecipePage() {
           } catch (genError) {
             let errorMessage = 'Failed to generate a recipe.';
 
-            // Check if it's an API error with a message
-            if (genError.response && genError.response.data && genError.response.data.message) {
-              errorMessage += ` API says: ${genError.response.data.message}`;
-            } else if (genError.message) {
-              errorMessage += ` Error: ${genError.message}`;
+            if (genError && typeof genError === 'object') {
+              if ('response' in genError && genError.response &&
+                  typeof genError.response === 'object' && 'data' in genError.response &&
+                  genError.response.data && typeof genError.response.data === 'object' &&
+                  'message' in genError.response.data) {
+                errorMessage += ` API says: ${genError.response.data.message}`;
+              } else if ('message' in genError && typeof genError.message === 'string') {
+                errorMessage += ` Error: ${genError.message}`;
+              }
             }
 
-            // Add recommendation
             errorMessage += ' Please try using more specific ingredients or dish names.';
 
             setError(errorMessage);

@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import axios from 'axios';
 import { API_URL } from '@/config';
-import { Ingredient, Equipment, CookingAction } from '@/types';
 import { getImageUrl, handleImageError } from '@/utils';
 import { ImageWithFallback } from './shared';
 
@@ -52,8 +51,8 @@ export const getIngredientImageUrl = async (ingredientName: string): Promise<str
         // Check if any significant word from the search appears in the ingredient name
         if (!wordMatch && searchWords.length > 0) {
           const ingredientWords = ingredientLower.split(/\s+/);
-          const hasWordMatch = searchWords.some(searchWord =>
-            ingredientWords.some(ingWord =>
+          const hasWordMatch = searchWords.some((searchWord: string) =>
+            ingredientWords.some((ingWord: string) =>
               ingWord === searchWord ||
               ingWord.startsWith(searchWord) ||
               searchWord.startsWith(ingWord)
@@ -444,8 +443,8 @@ export const getEquipmentImageUrl = async (equipmentName: string): Promise<strin
         // Check if any significant word from the search appears in the equipment name
         if (!wordMatch && searchWords.length > 0) {
           const equipmentWords = itemLower.split(/\s+/);
-          const hasWordMatch = searchWords.some(searchWord =>
-            equipmentWords.some(eqWord =>
+          const hasWordMatch = searchWords.some((searchWord: string) =>
+            equipmentWords.some((eqWord: string) =>
               eqWord === searchWord ||
               eqWord.startsWith(searchWord) ||
               searchWord.startsWith(eqWord)

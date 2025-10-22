@@ -21,7 +21,7 @@ const ImageWithFallback: React.FC<ImageWithFallbackProps> = ({
   ...props
 }) => {
   // Process the image URL
-  const imageUrl = getImageUrl(src);
+  const imageUrl = src ? getImageUrl(src) : undefined;
   
   return (
     <img

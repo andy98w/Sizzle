@@ -70,40 +70,61 @@ def enrich_items_with_images(items: List[Dict], item_type: str) -> None:
                 logger.warning(f"Could not fetch image for {item_type} '{item['name']}': {str(e)}")
 
 def enrich_recipe_with_full_data(recipe: Dict) -> Dict:
-    """Fetch and add all related data to a recipe."""
+    """Fetch and add all related data to a recipe (optimized with fewer queries)."""
     recipe_id = recipe['id']
 
-    # Get ingredients and equipment
     ingredients = execute_query_dict("SELECT * FROM recipe_ingredients WHERE recipe_id = %s", (recipe_id,))
     equipment = execute_query_dict("SELECT * FROM recipe_equipment WHERE recipe_id = %s", (recipe_id,))
 
-    # Enrich with images
     enrich_items_with_images(ingredients, "ingredient")
     enrich_items_with_images(equipment, "equipment")
 
-    # Get steps
     steps = execute_query_dict("SELECT * FROM recipe_steps WHERE recipe_id = %s ORDER BY id", (recipe_id,))
 
-    # For each step, get its ingredients and equipment
-    for step in steps:
-        step_id = step['id']
-        step['ingredients'] = execute_query_dict(
-            "SELECT ri.* FROM step_ingredients si JOIN recipe_ingredients ri ON si.ingredient_id = ri.id WHERE si.step_id = %s",
-            (step_id,)
-        )
-        step['equipment'] = execute_query_dict(
-            "SELECT re.* FROM step_equipment se JOIN recipe_equipment re ON se.equipment_id = re.id WHERE se.step_id = %s",
-            (step_id,)
-        )
+    if steps:
+        step_ids = tuple(step['id'] for step in steps)
 
-        # Enrich step ingredients and equipment with generated images
-        enrich_items_with_images(step['ingredients'], "ingredient")
-        enrich_items_with_images(step['equipment'], "equipment")
+        step_ingredients_query = """
+            SELECT si.step_id, ri.*
+            FROM step_ingredients si
+            JOIN recipe_ingredients ri ON si.ingredient_id = ri.id
+            WHERE si.step_id = ANY(%s)
+        """
+        all_step_ingredients = execute_query_dict(step_ingredients_query, (list(step_ids),))
 
-        # Format all image URLs
-        format_item_urls(step['ingredients'], 'url')
-        format_item_urls(step['equipment'], 'url')
-        format_item_urls([step], 'action_image', 'step_image', 'image_url')
+        step_equipment_query = """
+            SELECT se.step_id, re.*
+            FROM step_equipment se
+            JOIN recipe_equipment re ON se.equipment_id = re.id
+            WHERE se.step_id = ANY(%s)
+        """
+        all_step_equipment = execute_query_dict(step_equipment_query, (list(step_ids),))
+
+        step_ingredients_map = {}
+        for item in all_step_ingredients:
+            step_id = item.pop('step_id')
+            if step_id not in step_ingredients_map:
+                step_ingredients_map[step_id] = []
+            step_ingredients_map[step_id].append(item)
+
+        step_equipment_map = {}
+        for item in all_step_equipment:
+            step_id = item.pop('step_id')
+            if step_id not in step_equipment_map:
+                step_equipment_map[step_id] = []
+            step_equipment_map[step_id].append(item)
+
+        for step in steps:
+            step_id = step['id']
+            step['ingredients'] = step_ingredients_map.get(step_id, [])
+            step['equipment'] = step_equipment_map.get(step_id, [])
+
+            enrich_items_with_images(step['ingredients'], "ingredient")
+            enrich_items_with_images(step['equipment'], "equipment")
+
+            format_item_urls(step['ingredients'], 'url')
+            format_item_urls(step['equipment'], 'url')
+            format_item_urls([step], 'action_image', 'step_image', 'image_url')
 
     recipe['ingredients'] = ingredients
     recipe['equipment'] = equipment

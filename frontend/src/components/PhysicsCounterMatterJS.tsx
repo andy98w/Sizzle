@@ -253,7 +253,9 @@ const PhysicsCounterMatterJS = React.forwardRef<{
 }, PhysicsCounterProps>(({ ingredients, equipment, onSlideChange, isVisible = true, useAllItems = false }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<Matter.Engine | null>(null);
+  const runnerRef = useRef<Matter.Runner | null>(null);
   const mouseConstraintRef = useRef<Matter.MouseConstraint | null>(null);
+  const groundBodyRef = useRef<Matter.Body | null>(null);
 
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   const [isLoading, setIsLoading] = useState(true);
@@ -261,6 +263,7 @@ const PhysicsCounterMatterJS = React.forwardRef<{
   const [imagesLoaded, setImagesLoaded] = useState(0);
   const totalImages = useRef(0);
   const [floorY, setFloorY] = useState(0);
+  const prevFloorYRef = useRef(0);
   const [resetTrigger, setResetTrigger] = useState(0); // Add reset trigger
 
   // Items state - stores metadata alongside Matter.js bodies
@@ -284,22 +287,26 @@ const PhysicsCounterMatterJS = React.forwardRef<{
         const viewportHeight = window.innerHeight;
         let calculatedFloorY = getCounterFloorPosition(viewportHeight);
 
-        // If we have a container ref, adjust floor position relative to container's position in viewport
         if (containerRef.current) {
           const containerRect = containerRef.current.getBoundingClientRect();
           const containerTop = containerRect.top;
+          const containerHeight = containerRect.height;
 
-          // Adjust floor position to be relative to the container, not viewport
-          // Floor should be at 75% of viewport height, minus the container's top offset
-          calculatedFloorY = calculatedFloorY - containerTop;
-
+          const counterElement = document.getElementById('kitchen-counter-texture');
+          if (counterElement) {
+            const counterRect = counterElement.getBoundingClientRect();
+            calculatedFloorY = counterRect.top - containerTop;
+          } else {
+            calculatedFloorY = containerHeight * 0.75;
+          }
         }
 
-        const maxAllowedY = viewportHeight * 0.85;
-        if (calculatedFloorY > maxAllowedY) {
-          calculatedFloorY = viewportHeight * 0.75;
+        const floorDiff = Math.abs(calculatedFloorY - prevFloorYRef.current);
+        if (floorDiff > 1) {
+          console.log('Setting floorY to:', calculatedFloorY);
+          prevFloorYRef.current = calculatedFloorY;
+          setFloorY(calculatedFloorY);
         }
-        setFloorY(calculatedFloorY);
         setIsLoading(false);
       } catch (error) {
         console.warn('Counter not ready yet:', error);
@@ -311,7 +318,6 @@ const PhysicsCounterMatterJS = React.forwardRef<{
 
     const observer = new MutationObserver(() => {
       if (document.getElementById('kitchen-counter-texture')) {
-        console.log('Counter element detected - updating floor position');
         updateFloorPosition();
       }
     });
@@ -348,7 +354,7 @@ const PhysicsCounterMatterJS = React.forwardRef<{
 
   // Initialize Matter.js physics engine
   useEffect(() => {
-    if (!containerRef.current || containerSize.width === 0 || floorY <= 0) {
+    if (!containerRef.current || containerSize.width === 0) {
       return;
     }
 
@@ -363,7 +369,7 @@ const PhysicsCounterMatterJS = React.forwardRef<{
     // Create ground (floor) - much thicker and positioned to prevent items falling through
     const ground = Matter.Bodies.rectangle(
       containerSize.width / 2,
-      floorY + 100, // Position well below floor
+      containerSize.height, // Initial position, will be updated by floorY effect
       containerSize.width * 2, // Extra wide to catch items
       200, // Much thicker floor
       {
@@ -372,6 +378,7 @@ const PhysicsCounterMatterJS = React.forwardRef<{
         render: { visible: false }
       }
     );
+    groundBodyRef.current = ground;
 
     // Create walls - much thicker and positioned to prevent items escaping
     const leftWall = Matter.Bodies.rectangle(
@@ -414,8 +421,10 @@ const PhysicsCounterMatterJS = React.forwardRef<{
     Matter.Composite.add(engine.world, mouseConstraint);
 
     // Limit throwing velocity - clamp max speed when releasing items
-    Matter.Events.on(mouseConstraint, 'enddrag', (event) => {
+    Matter.Events.on(mouseConstraint, 'enddrag', (event: any) => {
       const body = event.body;
+      if (!body) return;
+
       const maxVelocity = 8; // Maximum throw speed (lower = slower throws)
 
       // Clamp velocity
@@ -430,12 +439,15 @@ const PhysicsCounterMatterJS = React.forwardRef<{
     });
 
     // Keep canvas element updated for mouse tracking
-    mouse.element.removeEventListener("mousewheel", mouse.mousewheel);
-    mouse.element.removeEventListener("DOMMouseScroll", mouse.mousewheel);
+    const mouseAny = mouse as any;
+    mouse.element.removeEventListener("mousewheel", mouseAny.mousewheel);
+    mouse.element.removeEventListener("DOMMouseScroll", mouseAny.mousewheel);
 
-    // Run the engine
     const runner = Matter.Runner.create();
-    Matter.Runner.run(runner, engine);
+    runnerRef.current = runner;
+    if (isVisible) {
+      Matter.Runner.run(runner, engine);
+    }
 
     // Force re-render on each engine update
     Matter.Events.on(engine, 'afterUpdate', () => {
@@ -461,12 +473,33 @@ const PhysicsCounterMatterJS = React.forwardRef<{
       setItems(prevItems => [...prevItems]);
     });
 
-    // Cleanup
     return () => {
       Matter.Runner.stop(runner);
       Matter.Engine.clear(engine);
+      groundBodyRef.current = null;
     };
-  }, [containerSize.width, containerSize.height, floorY]);
+  }, [containerSize.width, containerSize.height]);
+
+  useEffect(() => {
+    if (!runnerRef.current || !engineRef.current) return;
+
+    if (isVisible) {
+      Matter.Runner.run(runnerRef.current, engineRef.current);
+    } else {
+      Matter.Runner.stop(runnerRef.current);
+    }
+  }, [isVisible]);
+
+  // Update ground position when floorY changes
+  useEffect(() => {
+    if (groundBodyRef.current && floorY > 0) {
+      console.log('Updating ground position to:', floorY + 100);
+      Matter.Body.setPosition(groundBodyRef.current, {
+        x: groundBodyRef.current.position.x,
+        y: floorY + 100
+      });
+    }
+  }, [floorY]);
 
   // Initialize items
   useEffect(() => {
@@ -478,6 +511,8 @@ const PhysicsCounterMatterJS = React.forwardRef<{
     console.log(`PhysicsCounter received ${ingredients.length} ingredients and ${equipment.length} equipment`);
     console.log('Ingredients:', ingredients);
     console.log('Equipment:', equipment);
+    console.log('Container size:', containerSize);
+    console.log('Floor Y:', floorY);
     hasInitializedRef.current = true;
 
     const initializeItems = async () => {
@@ -505,10 +540,11 @@ const PhysicsCounterMatterJS = React.forwardRef<{
             console.log(`📦 PhysicsCounter: Using cached URL for ingredient: ${ingredient.name}`);
           } else {
             console.log(`🔍 PhysicsCounter: Fetching URL for ingredient: ${ingredient.name}`);
-            imageUrl = await getIngredientImageUrl(ingredient.name);
+            const fetchedUrl = await getIngredientImageUrl(ingredient.name);
+            imageUrl = fetchedUrl || undefined;
             // Cache the result
-            if (imageUrl) {
-              imageUrlCache[cacheKey] = imageUrl;
+            if (fetchedUrl) {
+              imageUrlCache[cacheKey] = fetchedUrl;
             }
           }
         }
@@ -560,10 +596,11 @@ const PhysicsCounterMatterJS = React.forwardRef<{
             console.log(`📦 PhysicsCounter: Using cached URL for equipment: ${equip.name}`);
           } else {
             console.log(`🔍 PhysicsCounter: Fetching URL for equipment: ${equip.name}`);
-            imageUrl = await getEquipmentImageUrl(equip.name);
+            const fetchedUrl = await getEquipmentImageUrl(equip.name);
+            imageUrl = fetchedUrl || undefined;
             // Cache the result
-            if (imageUrl) {
-              imageUrlCache[cacheKey] = imageUrl;
+            if (fetchedUrl) {
+              imageUrlCache[cacheKey] = fetchedUrl;
             }
           }
         }

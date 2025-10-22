@@ -19,7 +19,11 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
   const [loadingProgress, setLoadingProgress] = useState(0);
 
   // Reference to the physics counter component
-  const physicsCounterRef = useRef<{ exitAnimationNext: () => void; exitAnimationPrev: () => void }>(null);
+  const physicsCounterRef = useRef<{
+    exitAnimation: (direction?: 1 | -1) => void;
+    exitAnimationNext: () => void;
+    exitAnimationPrev: () => void;
+  }>(null);
 
   // Total number of slides: title slide + ingredients/equipment slide + all steps
   const totalSlides = 2 + recipe.steps.length;
@@ -147,7 +151,7 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
         setEnrichedRecipe(recipeClone);
 
         // Remove duplicates
-        const uniqueImages = [...new Set(imagesToPreload)].filter(url => url);
+        const uniqueImages = Array.from(new Set(imagesToPreload)).filter(url => url);
         console.log(`📋 Total unique images to preload: ${uniqueImages.length}`);
 
         if (uniqueImages.length === 0) {
@@ -668,9 +672,8 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
                 </div>
               </div>
               
-              {/* Step slides - render all at once and show/hide to preserve physics state */}
               {enrichedRecipe.steps.map((step, stepIndex) => {
-                const slideNumber = stepIndex + 2; // Steps start at slide 2 (0-indexed)
+                const slideNumber = stepIndex + 2;
                 const isVisible = currentSlide === slideNumber;
                 const isCurrentlyAnimating = ingredientsAnimating && currentSlide === slideNumber;
                 const wasJustEntered = currentSlide === slideNumber && previousSlide !== slideNumber;
@@ -692,7 +695,7 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
                       {/* Physics counter with ONLY this step's ingredients/equipment - extends full screen */}
                       <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
                         <PhysicsCounter
-                          ref={(el) => (stepPhysicsRefs.current[stepIndex] = el)}
+                          ref={(el) => { stepPhysicsRefs.current[stepIndex] = el; }}
                           ingredients={step.ingredients || []}
                           equipment={step.equipment || []}
                           onSlideChange={(dir) => changeSlide(dir || 1)}

@@ -1,3 +1,5 @@
+import React from 'react';
+
 /**
  * Utility functions for the frontend
  */
@@ -41,4 +43,22 @@ export function truncate(str: string, length: number): string {
   if (!str) return '';
   if (str.length <= length) return str;
   return str.slice(0, length) + '...';
+}
+
+/**
+ * Handles fetch errors and returns a user-friendly error message
+ */
+export function handleFetchError(error: unknown, defaultMessage: string): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return defaultMessage;
+}
+
+/**
+ * Handles image loading errors by setting a fallback image
+ */
+export function handleImageError(event: React.SyntheticEvent<HTMLImageElement>): void {
+  const target = event.target as HTMLImageElement;
+  target.src = '/images/placeholder.png';
 }

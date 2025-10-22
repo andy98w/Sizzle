@@ -18,13 +18,14 @@ interface Equipment {
 }
 
 interface RecipeStep {
-  id: number;
+  id?: number;
   instruction: string;
-  action: CookingAction;
+  action?: string | CookingAction;
   ingredients: Ingredient[];
   equipment: Equipment[];
   action_image?: string;
   step_image?: string;
+  image_url?: string;
 }
 
 interface Recipe {
@@ -252,7 +253,7 @@ const RecipeStepCarousel: React.FC<RecipeStepCarouselProps> = ({ recipe }) => {
                         }}
                       />
                       <RecipeAnimation
-                        action={recipe.steps[currentStep - 1].action}
+                        action={(recipe.steps[currentStep - 1].action || 'mix') as CookingAction}
                         ingredients={recipe.steps[currentStep - 1].ingredients.map(i => i.name)}
                         equipment={recipe.steps[currentStep - 1].equipment.map(e => e.name)}
                         size="medium"
@@ -260,7 +261,7 @@ const RecipeStepCarousel: React.FC<RecipeStepCarouselProps> = ({ recipe }) => {
                     </div>
                   ) : (
                     <RecipeAnimation
-                      action={recipe.steps[currentStep - 1].action}
+                      action={(recipe.steps[currentStep - 1].action || 'mix') as CookingAction}
                       ingredients={recipe.steps[currentStep - 1].ingredients.map(i => i.name)}
                       equipment={recipe.steps[currentStep - 1].equipment.map(e => e.name)}
                       size="large"
