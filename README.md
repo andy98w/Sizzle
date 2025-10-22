@@ -1,14 +1,16 @@
 # Sizzle - Animated Recipe Assistant
 
-An AI-powered recipe assistant with animated step-by-step cooking instructions.
+An AI-powered recipe assistant with animated step-by-step cooking instructions and AI-generated images.
 
 ## Features
 
-- Get detailed recipes with ingredients and instructions
-- Ask follow-up questions about cooking techniques
-- Get suggestions for ingredient substitutions
-- Animated recipe steps with 2D visualizations
-- Animated ingredients and equipment displays
+- AI-generated recipes with detailed ingredients and instructions
+- Automatic step image generation using DALL-E 3
+- Physics-based ingredient and equipment animations using Matter.js
+- Interactive slideshow recipe display
+- Recipe search and database storage
+- Automatic recipe overwrite to prevent duplicates
+- Parallel image generation for faster recipe creation
 
 ## Project Structure
 
@@ -19,19 +21,24 @@ The project is split into two main parts:
 
 ## Tech Stack
 
-Frontend:
-- Next.js (React-based) with Framer Motion for animations
-- TypeScript for type safety
+**Frontend:**
+- Next.js 14 (React) with TypeScript
+- Matter.js for physics-based animations
 - Tailwind CSS for styling
+- Axios for API communication
 
-Backend:
-- Python with LangChain and OpenAI
-- FastAPI to create an API layer 
-- Support for AI-generated animations (planned)
+**Backend:**
+- Python 3.9+ with FastAPI
+- LangChain with OpenAI GPT-4
+- OpenAI DALL-E 3 for image generation
+- Supabase (PostgreSQL) for database
+- Oracle Cloud Infrastructure (OCI) for object storage
+- Background task processing with ThreadPoolExecutor
 
-Database (planned):
-- PostgreSQL with Supabase for user authentication and profile management
-- Redis for caching frequent recipe requests
+**AI/ML:**
+- OpenAI GPT-4 for recipe generation
+- OpenAI DALL-E 3 for step image generation
+- Custom prompt engineering for consistent image style
 
 ## Getting Started
 
@@ -49,9 +56,16 @@ Database (planned):
    pip install -r requirements.txt
    ```
 
-3. Create a `.env` file with your OpenAI API key:
+3. Create a `.env` file with required environment variables:
    ```
-   OPENAI_API_KEY=your_api_key_here
+   OPENAI_API_KEY=your_openai_api_key
+   SUPABASE_URL=your_supabase_url
+   SUPABASE_KEY=your_supabase_key
+   OCI_NAMESPACE=your_oci_namespace
+   OCI_BUCKET_NAME=your_oci_bucket_name
+   OCI_REGION=your_oci_region
+   OCI_CONFIG_FILE=~/.oci/config
+   OCI_CONFIG_PROFILE=DEFAULT
    ```
 
 4. Start the backend server:
@@ -78,57 +92,60 @@ Database (planned):
 
 4. Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-## Available Features
+## Key Features Explained
 
-- Chat interface for asking about recipes
-- Animated recipe steps for visualizing cooking processes
-- Visual representations of ingredients and cooking equipment
-- Step-by-step animated cooking instructions
+### Recipe Generation
+- Natural language recipe queries powered by GPT-4
+- Automatic search for existing recipes to prevent duplicates
+- Structured recipe data with ingredients, equipment, and detailed steps
+- Automatic saving to Supabase database
 
-## Roadmap for Animation Enhancement
+### Image Generation
+- DALL-E 3 integration for step-by-step cooking images
+- Parallel image generation for faster recipe creation
+- Automatic image upload to OCI object storage
+- Deterministic naming to prevent duplicate images
+- Background processing to improve user experience
 
-1. **Phase 1: Foundation**
-   - Basic animations using Framer Motion
-   - Ingredient and equipment visualization
-   - Cooking action animations
+### Physics Animations
+- Matter.js-based physics engine for realistic ingredient movement
+- Interactive ingredient and equipment displays
+- Smooth transitions and animations
+- Optimized image loading and caching
 
-2. **Phase 2: AI Integration**
-   - Connect to Stability AI or similar APIs
-   - Generate custom animations for specific recipe steps
-   - Build animation library for common cooking actions
+## API Endpoints
 
-3. **Phase 3: Advanced Animations**
-   - Real-time animation generation
-   - User-customizable animations
-   - Mobile-optimized animations
+- `GET /api-status` - Check API and database status
+- `POST /recipe/parse` - Search for existing recipes
+- `POST /recipe/generate` - Generate new recipe with AI
+- `GET /recipes` - List all recipes with pagination
+- `GET /recipes/{id}` - Get specific recipe with full data
+- `POST /recipes/{id}/generate-step-images` - Generate images for recipe steps
+- `GET /ingredients` - List ingredients with search
+- `GET /equipment` - List equipment with search
 
-## Deployment
+## Architecture
 
-For production deployment, consider:
+```
+Frontend (Next.js)
+    ↓
+Backend API (FastAPI)
+    ↓
+┌─────────────┬──────────────┬─────────────┐
+│   OpenAI    │   Supabase   │     OCI     │
+│   (AI Gen)  │  (Database)  │  (Storage)  │
+└─────────────┴──────────────┴─────────────┘
+```
 
-- Frontend: Vercel, Netlify, or AWS Amplify
-- Backend: AWS Lambda, Google Cloud Run, or Oracle Cloud
-- Database: PostgreSQL with Supabase for user authentication
+## TODO
 
-## TODO 
-
-1. Expand the Animation Library:
-   - Add more cooking actions (bake, grill, simmer, blend)
-   - Create more ingredient-specific animations
-   - Implement more complex multi-step animations
-2. Integrate with AI Image Generation:
-   - Use Stability AI API or DALL-E to generate custom cooking visuals
-   - Build a preprocessing pipeline to convert AI images to animation frames
-   - Implement a caching system for frequently requested animations
-3. Enhance Existing Animations:
-   - Add more physics-based motion (liquid flowing, dough rising)
-   - Improve transitions between animation states
-   - Add optional sound effects for immersion
-4. Technical Improvements:
-   - Use Lottie for vector-based animations (smaller file size)
-   - Implement lazy loading for better performance
-   - Create adaptive animations that respond to screen size
-5. User Experience:
-   - Add playback controls (pause, rewind, slow down)
-   - Create hover states with additional information
-   - Allow users to toggle between simplified/detailed animations
+- [ ] Add user authentication and profiles
+- [ ] Implement recipe rating and favorites
+- [ ] Add cooking timers and notifications
+- [ ] Create mobile-responsive design
+- [ ] Add recipe sharing functionality
+- [ ] Implement recipe collections/cookbooks
+- [ ] Add nutritional information
+- [ ] Support for dietary restrictions and filters
+- [ ] Recipe modification and saving custom versions
+- [ ] Shopping list generation from recipes
