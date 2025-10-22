@@ -101,3 +101,36 @@ class OCIObjectStorage:
         except Exception as e:
             logger.warning(f"Error checking if object exists: {str(e)}")
             return False
+
+
+def upload_file_to_oci(file_content: bytes, filename: str, content_type: str = "image/png") -> str:
+    """
+    Upload file content (bytes) to OCI Object Storage.
+
+    Args:
+        file_content: The file content as bytes
+        filename: The filename to use in OCI storage
+        content_type: MIME type of the file
+
+    Returns:
+        Full URL to the uploaded file, or empty string if upload failed
+    """
+    if not OCI_PAR_URL:
+        logger.error("OCI PAR URL not configured")
+        return ""
+
+    try:
+        par_upload_url = f"{OCI_PAR_URL.rstrip('/')}/{filename}"
+        response = requests.put(par_upload_url, data=file_content, headers={'Content-Type': content_type})
+
+        if response.status_code in (200, 201):
+            logger.info(f"File uploaded successfully to OCI: {filename}")
+            # Return the full OCI URL
+            return par_upload_url
+        else:
+            logger.error(f"Failed to upload to OCI. Status: {response.status_code}, Response: {response.text}")
+            return ""
+
+    except Exception as e:
+        log_exception(e, f"Error uploading to OCI: {filename}")
+        return ""

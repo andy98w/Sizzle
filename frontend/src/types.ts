@@ -21,6 +21,9 @@ export interface RecipeStep {
   action?: string;
   action_image?: string;
   step_image?: string;
+  image_url?: string;  // Added for DALL-E generated step images
+  image_prompt?: string;  // The prompt used to generate the image
+  image_generated_at?: string;  // When the image was generated
   ingredients: Ingredient[];
   equipment: Equipment[];
 }

@@ -5,6 +5,7 @@ import { RecipeAnimation, IngredientVisual, EquipmentVisual, getIngredientImageU
 import { Recipe, RecipeStep, Ingredient, Equipment } from '@/types';
 import PhysicsCounter from './PhysicsCounterMatterJS';
 import { getImageUrl } from '@/utils';
+import { API_URL } from '@/config';
 
 interface SlideshowRecipeProps {
   recipe: Recipe;
@@ -30,9 +31,14 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
   // Animation states for synchronization
   const [ingredientsAnimating, setIngredientsAnimating] = useState(false);
   const [animationDirection, setAnimationDirection] = useState<1 | -1>(1);
+  const [previousSlide, setPreviousSlide] = useState(0);
+  const [isEntering, setIsEntering] = useState(false);
 
   // Store enriched recipe with URLs populated
   const [enrichedRecipe, setEnrichedRecipe] = useState(recipe);
+
+  // Create refs for all step physics counters
+  const stepPhysicsRefs = useRef<Array<any>>([]);
 
   // Preload only the images needed for THIS recipe
   useEffect(() => {
@@ -89,10 +95,17 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
           console.log(`📝 Processing ${recipeClone.steps.length} recipe steps`);
           for (let stepIdx = 0; stepIdx < recipeClone.steps.length; stepIdx++) {
             const step = recipeClone.steps[stepIdx];
+            console.log(`📝 Step ${stepIdx + 1} has ${step.ingredients?.length || 0} ingredients and ${step.equipment?.length || 0} equipment`);
             if (step.ingredients) {
               for (let i = 0; i < step.ingredients.length; i++) {
                 const ingredient = step.ingredients[i];
                 let url = ingredient.url || ingredient.imageUrl;
+                // Convert relative URLs to absolute
+                if (url && url.startsWith('/')) {
+                  url = `${API_URL}${url}`;
+                  recipeClone.steps[stepIdx].ingredients[i].url = url;
+                  console.log(`🔗 Converted ingredient URL to: ${url}`);
+                }
                 if (!url && ingredient.name) {
                   // Fetch from database
                   console.log(`🔍 Fetching URL for step ingredient: ${ingredient.name}`);
@@ -109,6 +122,12 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
               for (let i = 0; i < step.equipment.length; i++) {
                 const equipment = step.equipment[i];
                 let url = equipment.url || equipment.imageUrl;
+                // Convert relative URLs to absolute
+                if (url && url.startsWith('/')) {
+                  url = `${API_URL}${url}`;
+                  recipeClone.steps[stepIdx].equipment[i].url = url;
+                  console.log(`🔗 Converted equipment URL to: ${url}`);
+                }
                 if (!url && equipment.name) {
                   // Fetch from database
                   console.log(`🔍 Fetching URL for step equipment: ${equipment.name}`);
@@ -189,8 +208,13 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
   // Function to change slides after animation completes
   function changeSlide(dir: number) {
     setDirection(dir);
+    setPreviousSlide(currentSlide);
     setCurrentSlide(currentSlide + dir);
     setIngredientsAnimating(false);
+
+    // Trigger entry animation for new slide
+    setIsEntering(true);
+    setTimeout(() => setIsEntering(false), 50);
   }
 
   // Navigation functions
@@ -202,7 +226,22 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
         setAnimationDirection(1);
         physicsCounterRef.current.exitAnimationNext();
         // Animation will call changeSlide() after completion
-      } else {
+      }
+      // If we're on a step slide (>= 2), trigger the step physics animation
+      else if (currentSlide >= 2) {
+        const stepIndex = currentSlide - 2;
+        const stepRef = stepPhysicsRefs.current[stepIndex];
+        if (stepRef) {
+          setIngredientsAnimating(true);
+          setAnimationDirection(1);
+          stepRef.exitAnimationNext();
+          // Animation will call changeSlide() after completion
+        } else {
+          setDirection(1);
+          setCurrentSlide(currentSlide + 1);
+        }
+      }
+      else {
         setDirection(1);
         setCurrentSlide(currentSlide + 1);
       }
@@ -217,7 +256,22 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
         setAnimationDirection(-1);
         physicsCounterRef.current.exitAnimationPrev();
         // Animation will call changeSlide() after completion
-      } else {
+      }
+      // If we're on a step slide (>= 2), trigger the step physics animation
+      else if (currentSlide >= 2) {
+        const stepIndex = currentSlide - 2;
+        const stepRef = stepPhysicsRefs.current[stepIndex];
+        if (stepRef) {
+          setIngredientsAnimating(true);
+          setAnimationDirection(-1);
+          stepRef.exitAnimationPrev();
+          // Animation will call changeSlide() after completion
+        } else {
+          setDirection(-1);
+          setCurrentSlide(currentSlide - 1);
+        }
+      }
+      else {
         setDirection(-1);
         setCurrentSlide(currentSlide - 1);
       }
@@ -252,18 +306,10 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
   // Animation variants
   const slideVariants = {
     enter: (direction: number) => {
-      // For initial load (direction = 0), fall from top
-      if (currentSlide <= 1 && direction === 0) {
-        return {
-          y: '100%',
-          opacity: 0,
-          scale: 0.8
-        };
-      }
       // For horizontal navigation: left button (direction = -1) brings content from left
       // right button (direction = 1) brings content from right
       return {
-        x: direction < 0 ? '-100%' : '100%', 
+        x: direction < 0 ? '-100%' : '100%',
         opacity: 0,
         scale: 1
       };
@@ -572,16 +618,23 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
                     className="p-4 mb-4 ingredients-title transition-opacity duration-300"
                     style={{ zIndex: 1, position: 'relative', pointerEvents: 'none' }}
                     animate={{
-                      x: ingredientsAnimating
+                      x: ingredientsAnimating && currentSlide === 1
                         ? animationDirection === 1
-                          ? ['0%', '5%', '4%', '-100%']
-                          : ['0%', '-5%', '-4%', '100%']
-                        : '0%'
+                          ? [0, 60, 50, -600]
+                          : [0, -60, -50, 600]
+                        : currentSlide === 1
+                          ? 0
+                          : (currentSlide < 1 ? 600 : -600),
+                      opacity: ingredientsAnimating && currentSlide === 1
+                        ? [1, 1, 1, 0]
+                        : currentSlide === 1
+                          ? 1
+                          : 0
                     }}
                     transition={{
-                      duration: 1.05,
-                      times: [0, 0.29, 0.38, 1],
-                      ease: ["easeOut", "easeOut", "easeIn"]
+                      duration: ingredientsAnimating && currentSlide === 1 ? 0.6 : 0.49,
+                      times: ingredientsAnimating && currentSlide === 1 ? [0, 0.25, 0.35, 1] : undefined,
+                      ease: ingredientsAnimating && currentSlide === 1 ? ["easeOut", "easeOut", "easeIn"] : "easeOut"
                     }}
                   >
                     <h2 className="text-3xl font-bold text-center text-black">
@@ -596,8 +649,18 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
                   <div style={{ position: 'static', width: '100%', height: '100%' }}>
                     <PhysicsCounter
                       ref={physicsCounterRef}
-                      ingredients={enrichedRecipe.ingredients}
-                      equipment={enrichedRecipe.equipment}
+                      ingredients={enrichedRecipe.ingredients?.length > 0
+                        ? enrichedRecipe.ingredients
+                        : enrichedRecipe.steps?.flatMap(s => s.ingredients || []).filter((item, index, self) =>
+                            index === self.findIndex(t => t.name === item.name)
+                          ) || []
+                      }
+                      equipment={enrichedRecipe.equipment?.length > 0
+                        ? enrichedRecipe.equipment
+                        : enrichedRecipe.steps?.flatMap(s => s.equipment || []).filter((item, index, self) =>
+                            index === self.findIndex(t => t.name === item.name)
+                          ) || []
+                      }
                       onSlideChange={(dir) => changeSlide(dir || 1)}
                       isVisible={currentSlide === 1}
                     />
@@ -605,55 +668,109 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
                 </div>
               </div>
               
-              {/* Step slides */}
-              {currentSlide > 1 && (
-                <motion.div
-                  key={`step-${currentSlide}`}
-                  custom={direction}
-                  variants={slideVariants}
-                  initial="enter"
-                  animate="center"
-                  exit="exit"
-                  transition={{
-                    type: 'spring',
-                    stiffness: 300,
-                    damping: 30,
-                    duration: 0.5
-                  }}
-                  className="absolute inset-0 flex flex-col md:flex-row w-full m-4"
-                >
-                  {/* Physics counter with ONLY this step's ingredients/equipment on the left */}
-                  <div className="md:w-1/2 relative" style={{ backgroundColor: 'transparent', border: 'none' }}>
-                    {/* Full viewport physics container - same as slide 2 */}
-                    <div style={{ position: 'static', width: '100%', height: '100%' }}>
-                      <PhysicsCounter
-                        ingredients={enrichedRecipe.steps[currentSlide - 2].ingredients}
-                        equipment={enrichedRecipe.steps[currentSlide - 2].equipment}
-                        isVisible={currentSlide > 1}
-                      />
-                    </div>
-                    {/* Step number overlay */}
-                    <div className="absolute top-4 left-4 w-20 h-20 bg-primary-100 rounded-full flex items-center justify-center z-[60000] pointer-events-none">
-                      <span className="text-4xl font-bold text-primary-600">
-                        {currentSlide - 1}
-                      </span>
-                    </div>
+              {/* Step slides - render all at once and show/hide to preserve physics state */}
+              {enrichedRecipe.steps.map((step, stepIndex) => {
+                const slideNumber = stepIndex + 2; // Steps start at slide 2 (0-indexed)
+                const isVisible = currentSlide === slideNumber;
+                const isCurrentlyAnimating = ingredientsAnimating && currentSlide === slideNumber;
+                const wasJustEntered = currentSlide === slideNumber && previousSlide !== slideNumber;
+                const entryDirection = wasJustEntered ? (currentSlide > previousSlide ? 1 : -1) : 0;
+
+                return (
+                  <div
+                    key={`step-${stepIndex}`}
+                    className="absolute inset-0 flex flex-col md:flex-row w-full m-4"
+                    style={{
+                      visibility: isVisible ? 'visible' : 'hidden',
+                      pointerEvents: isVisible ? 'auto' : 'none',
+                      zIndex: isVisible ? 1 : -1,
+                      opacity: 1
+                    }}
+                  >
+                    {/* Step image and physics on the left */}
+                    <div className="md:w-1/2 relative h-full" style={{ backgroundColor: 'transparent', border: 'none' }}>
+                      {/* Physics counter with ONLY this step's ingredients/equipment - extends full screen */}
+                      <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
+                        <PhysicsCounter
+                          ref={(el) => (stepPhysicsRefs.current[stepIndex] = el)}
+                          ingredients={step.ingredients || []}
+                          equipment={step.equipment || []}
+                          onSlideChange={(dir) => changeSlide(dir || 1)}
+                          isVisible={isVisible}
+                        />
+                      </div>
+
+                    {/* Step image overlay (if available) - positioned near top */}
+                    {step.image_url && (
+                      <motion.div
+                        className="absolute top-16 left-8 right-8 flex items-start justify-center pointer-events-none"
+                        style={{ zIndex: 9000, maxHeight: '40vh' }}
+                        animate={{
+                          x: isCurrentlyAnimating
+                            ? animationDirection === 1
+                              ? [0, 60, 50, -600]
+                              : [0, -60, -50, 600]
+                            : isVisible
+                              ? 0
+                              : (slideNumber > currentSlide ? 600 : -600),
+                          opacity: isCurrentlyAnimating
+                            ? [1, 1, 1, 0]
+                            : isVisible
+                              ? 1
+                              : 0
+                        }}
+                        transition={{
+                          duration: isCurrentlyAnimating ? 0.6 : 0.9,
+                          times: isCurrentlyAnimating ? [0, 0.25, 0.35, 1] : undefined,
+                          ease: isCurrentlyAnimating ? ["easeOut", "easeOut", "easeIn"] : [0.16, 1, 0.3, 1]
+                        }}
+                      >
+                        <img
+                          src={step.image_url}
+                          alt={`Step ${stepIndex + 1}`}
+                          className="max-w-full object-contain rounded-lg shadow-2xl"
+                          style={{ maxHeight: '40vh', maxWidth: '85%' }}
+                        />
+                      </motion.div>
+                    )}
                   </div>
 
                   {/* Step instructions and ingredients/equipment */}
-                  <div className="md:w-1/2 p-6 md:p-10 flex flex-col custom-scrollbar overflow-y-auto h-full" style={{ backgroundColor: 'transparent', border: 'none' }}>
+                  <motion.div
+                    className="md:w-1/2 p-6 md:p-10 flex flex-col custom-scrollbar overflow-y-auto h-full"
+                    style={{ backgroundColor: 'transparent', border: 'none' }}
+                    animate={{
+                      x: isCurrentlyAnimating
+                        ? animationDirection === 1
+                          ? [0, 60, 50, -600]
+                          : [0, -60, -50, 600]
+                        : isVisible
+                          ? 0
+                          : (slideNumber > currentSlide ? 600 : -600),
+                      opacity: isCurrentlyAnimating
+                        ? [1, 1, 1, 0]
+                        : isVisible
+                          ? 1
+                          : 0
+                    }}
+                    transition={{
+                      duration: isCurrentlyAnimating ? 0.6 : 0.9,
+                      times: isCurrentlyAnimating ? [0, 0.25, 0.35, 1] : undefined,
+                      ease: isCurrentlyAnimating ? ["easeOut", "easeOut", "easeIn"] : [0.16, 1, 0.3, 1]
+                    }}
+                  >
                     <div className="sticky top-0 z-10 pb-2" style={{ backgroundColor: 'transparent' }}>
                       <h2 className="text-3xl font-bold mb-4 text-gray-800">
-                        Step {currentSlide - 1}
+                        Step {stepIndex + 1}
                       </h2>
                     </div>
-                    
+
                     <p className="text-xl mb-6 text-gray-700 leading-relaxed">
-                      {recipe.steps[currentSlide - 2].instruction}
+                      {step.instruction}
                     </p>
-                    
+
                     <div className="flex flex-col space-y-4 mb-16">
-                      {recipe.steps[currentSlide - 2].ingredients.length > 0 && (
+                      {step.ingredients && step.ingredients.length > 0 && (
                         <div className="bg-primary-50 p-4 md:p-6 rounded-lg border border-primary-100">
                           <h3 className="font-bold text-lg mb-3 text-primary-700 flex items-center">
                             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
@@ -663,7 +780,7 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
                             Ingredients for this step:
                           </h3>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-                            {recipe.steps[currentSlide - 2].ingredients.map((ingredient, index) => (
+                            {step.ingredients.map((ingredient, index) => (
                               <IngredientVisual
                                 key={index}
                                 ingredient={ingredient.name}
@@ -673,8 +790,8 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
                           </div>
                         </div>
                       )}
-                      
-                      {recipe.steps[currentSlide - 2].equipment.length > 0 && (
+
+                      {step.equipment && step.equipment.length > 0 && (
                         <div className="bg-blue-50 p-4 md:p-6 rounded-lg border border-blue-100">
                           <h3 className="font-bold text-lg mb-3 text-blue-700 flex items-center">
                             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
@@ -683,7 +800,7 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
                             Equipment for this step:
                           </h3>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-                            {recipe.steps[currentSlide - 2].equipment.map((item, index) => (
+                            {step.equipment.map((item, index) => (
                               <EquipmentVisual
                                 key={index}
                                 equipment={item.name}
@@ -692,13 +809,14 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
                           </div>
                         </div>
                       )}
-                      
+
                       {/* Add some bottom padding for better scrolling */}
                       <div className="h-8"></div>
                     </div>
-                  </div>
-                </motion.div>
-              )}
+                  </motion.div>
+                </div>
+                );
+              })}
             </AnimatePresence>
           </div>
         </div>

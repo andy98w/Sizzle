@@ -2,6 +2,15 @@ import React, { useEffect, useRef, useState } from 'react';
 import Matter from 'matter-js';
 import { PHYSICS_CONSTANTS, getCounterFloorPosition } from '../utils/constants';
 import { getIngredientImageUrl, getEquipmentImageUrl } from './AnimationLibrary';
+import { API_URL } from '../config';
+
+// Helper function to convert relative URLs to absolute
+const toAbsoluteUrl = (url: string | undefined): string | undefined => {
+  if (!url) return url;
+  if (url.startsWith('http://') || url.startsWith('https://')) return url;
+  if (url.startsWith('/')) return `${API_URL}${url}`;
+  return url;
+};
 
 // Store random offsets per item to keep animations consistent
 const itemOffsets: Record<string, { jiggle: number, jiggleRotate: number, swipe: number, swipeRotate: number }> = {};
@@ -284,16 +293,12 @@ const PhysicsCounterMatterJS = React.forwardRef<{
           // Floor should be at 75% of viewport height, minus the container's top offset
           calculatedFloorY = calculatedFloorY - containerTop;
 
-          console.log('Container top offset:', containerTop, 'Adjusted floor Y:', calculatedFloorY);
         }
 
         const maxAllowedY = viewportHeight * 0.85;
         if (calculatedFloorY > maxAllowedY) {
-          console.error('Floor position is too low! Adjusting to 75% of viewport height.');
           calculatedFloorY = viewportHeight * 0.75;
         }
-
-        console.log('PhysicsCounterMatterJS - Setting floor Y to:', calculatedFloorY, 'px');
         setFloorY(calculatedFloorY);
         setIsLoading(false);
       } catch (error) {
@@ -470,6 +475,9 @@ const PhysicsCounterMatterJS = React.forwardRef<{
     if (!engineRef.current || containerSize.width === 0 || floorY <= 0) return;
 
     console.log('Initializing items with Matter.js');
+    console.log(`PhysicsCounter received ${ingredients.length} ingredients and ${equipment.length} equipment`);
+    console.log('Ingredients:', ingredients);
+    console.log('Equipment:', equipment);
     hasInitializedRef.current = true;
 
     const initializeItems = async () => {
@@ -488,7 +496,7 @@ const PhysicsCounterMatterJS = React.forwardRef<{
         const size = 80;
 
         // Fetch image URL from database or cache
-        let imageUrl = ingredient.url || ingredient.imageUrl;
+        let imageUrl = toAbsoluteUrl(ingredient.url || ingredient.imageUrl);
         if (!imageUrl && ingredient.name) {
           // Check cache first
           const cacheKey = `ingredient-${ingredient.name}`;
@@ -543,7 +551,7 @@ const PhysicsCounterMatterJS = React.forwardRef<{
         const size = 90;
 
         // Fetch image URL from database or cache
-        let imageUrl = equip.url || equip.imageUrl;
+        let imageUrl = toAbsoluteUrl(equip.url || equip.imageUrl);
         if (!imageUrl && equip.name) {
           // Check cache first
           const cacheKey = `equipment-${equip.name}`;
@@ -718,17 +726,17 @@ const PhysicsCounterMatterJS = React.forwardRef<{
     const isNowVisible = isVisible;
 
     if (wasHidden && isNowVisible) {
-      if (lastExitDirectionRef.current !== null) {
-        const entranceDirection = lastExitDirectionRef.current === 1 ? -1 : 1;
-        setAnimationState('slideIn');
-        setAnimationDirection(entranceDirection);
+      // Always slide in, default to sliding from right if no previous direction
+      const entranceDirection = lastExitDirectionRef.current !== null
+        ? (lastExitDirectionRef.current === 1 ? -1 : 1)
+        : 1; // Default: slide in from right
 
-        setTimeout(() => {
-          setAnimationState('none');
-        }, 800);
-      } else {
+      setAnimationState('slideIn');
+      setAnimationDirection(entranceDirection);
+
+      setTimeout(() => {
         setAnimationState('none');
-      }
+      }, 800);
     }
 
     prevVisibleRef.current = isVisible;
@@ -760,7 +768,7 @@ const PhysicsCounterMatterJS = React.forwardRef<{
         overflow: 'visible',
         backgroundColor: 'transparent',
         zIndex: 9994,
-        pointerEvents: 'auto',
+        pointerEvents: 'auto', // Enable dragging - container is fixed position so it needs pointer events
         animationName: getAnimationStyle(),
         animationDuration: animationState === 'jiggle' ? '0.3s' :
                           animationState === 'swipe' ? '0.5s' :
@@ -881,7 +889,7 @@ const PhysicsCounterMatterJS = React.forwardRef<{
               zIndex: 25000,
               userSelect: 'none',
               touchAction: 'none',
-              pointerEvents: 'none',
+              pointerEvents: 'none', // Items don't need pointer events - Matter.js handles via container
               transition: 'none'
             }}
             onMouseEnter={() => setHoveredItem(item.id)}

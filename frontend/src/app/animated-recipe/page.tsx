@@ -65,14 +65,8 @@ export default function AnimatedRecipePage() {
 
           setMatchingRecipes(recipes);
 
-          if (recipes.length === 1) {
-            const formattedRecipe = formatRecipe(recipes[0]);
-            setSelectedRecipe(formattedRecipe);
-            setTimeout(() => setShowSlideshow(true), 50);
-          } else if (recipes.length > 0) {
-            const formattedRecipe = formatRecipe(recipes[0]);
-            setSelectedRecipe(formattedRecipe);
-          }
+          // Don't auto-open slideshow - let user choose from the list
+          // They can click on a recipe card to view it
         } else if (response.data && (response.data.title || response.data.steps)) {
           // Legacy format - single recipe
           const formattedRecipe = formatRecipe(response.data);
@@ -101,19 +95,15 @@ export default function AnimatedRecipePage() {
                   const saveResponse = await axios.post(`${API_URL}/recipes`, formattedRecipe);
                   formattedRecipe.id = saveResponse.data.id;
                 } catch (saveError) {
-                  console.error("Error saving generated recipe:", saveError);
                 }
               }
 
               setSelectedRecipe(formattedRecipe);
               setTimeout(() => setShowSlideshow(true), 50);
             } else {
-              // Generation also failed
-              console.error("Failed to generate recipe:", generationResponse.data);
               setError('Unable to generate a recipe. Please try with more specific ingredients or dish name.');
             }
           } catch (genError) {
-            console.error("Error generating recipe:", genError);
             let errorMessage = 'Failed to generate a recipe.';
 
             // Check if it's an API error with a message
@@ -128,70 +118,47 @@ export default function AnimatedRecipePage() {
 
             setError(errorMessage);
           } finally {
-            // Always reset loading state
             setIsLoading(false);
           }
         }
       } catch (formatErr) {
-        console.error("Error processing recipe data:", formatErr);
         setError('Error processing recipe data. Please try a different search.');
       }
     } catch (error) {
-      console.error('Error fetching recipe:', error);
       setError('Failed to fetch the recipe. Please try again.');
     } finally {
       setIsLoading(false);
     }
   };
-  
-  // Format recipe data to ensure consistent field names
+
   const formatRecipe = (recipe: any): Recipe => {
-    // Basic validation - ensure recipe has required fields
     if (!recipe || typeof recipe !== 'object') {
-      console.error("Invalid recipe data:", recipe);
       throw new Error("Invalid recipe data received");
     }
 
-    // Ensure title exists, with fallback
     if (!recipe.title) {
-      console.warn("Recipe missing title, using default");
       recipe.title = "Untitled Recipe";
     }
 
-    // Ensure description exists, with fallback
     if (!recipe.description) {
-      console.warn("Recipe missing description, using default");
       recipe.description = "A delicious recipe.";
     }
 
-    // Set default servings if missing
     if (!recipe.servings || isNaN(recipe.servings)) {
-      console.warn("Recipe missing servings, using default");
       recipe.servings = 2;
     }
 
-    // Ensure steps, ingredients, and equipment are arrays
     if (!Array.isArray(recipe.steps)) {
-      console.warn("Recipe missing steps, using empty array");
       recipe.steps = [];
     }
 
     if (!Array.isArray(recipe.ingredients)) {
-      console.warn("Recipe missing ingredients, using empty array");
       recipe.ingredients = [];
     }
 
     if (!Array.isArray(recipe.equipment)) {
-      console.warn("Recipe missing equipment, using empty array");
       recipe.equipment = [];
     }
-
-    console.log("Formatted recipe:", {
-      title: recipe.title,
-      steps: recipe.steps.length,
-      ingredients: recipe.ingredients.length,
-      equipment: recipe.equipment.length
-    });
 
     return {
       id: recipe.id,
@@ -205,14 +172,11 @@ export default function AnimatedRecipePage() {
       steps: recipe.steps || []
     };
   };
-  
+
   const selectRecipe = (recipe: Recipe) => {
     const formattedRecipe = formatRecipe(recipe);
-    console.log("Selecting recipe:", formattedRecipe);
     setSelectedRecipe(formattedRecipe);
 
-    // Explicitly set showSlideshow to true after a short delay
-    // This ensures state updates are processed in the correct order
     setTimeout(() => {
       setShowSlideshow(true);
     }, 50);
@@ -226,11 +190,8 @@ export default function AnimatedRecipePage() {
         <SlideshowRecipe
           recipe={selectedRecipe}
           onClose={() => {
-            // Always reset the slideshow state first
             setShowSlideshow(false);
 
-            // If we have multiple recipes, keep the selected recipe to show in the list
-            // Otherwise clear it completely
             if (matchingRecipes.length <= 1) {
               setSelectedRecipe(null);
             }
@@ -293,7 +254,7 @@ export default function AnimatedRecipePage() {
           <div className="flex justify-center py-12">
             <div className="flex flex-col items-center">
               <div className="w-16 h-16 border-4 border-primary-200 border-t-primary-500 rounded-full animate-spin mb-4"></div>
-              <p className="text-gray-600" id="generation-loading-message">Finding and animating your recipe...</p>
+              <p className="text-gray-600" id="generation-loading-message">Finding your recipe...</p>
             </div>
           </div>
         )}
@@ -310,7 +271,7 @@ export default function AnimatedRecipePage() {
         )}
         
         {/* Recipe Search Results */}
-        {matchingRecipes.length > 1 && !showSlideshow && (
+        {matchingRecipes.length > 0 && !showSlideshow && (
           <motion.div
             className="bg-white rounded-2xl shadow-md overflow-hidden mb-8"
             initial={{ opacity: 0, y: 30 }}
@@ -384,35 +345,26 @@ export default function AnimatedRecipePage() {
                     setError(null);
 
                     try {
-                      // Generate a new recipe using the current query
                       const response = await axios.post(`${API_URL}/recipe/generate`, { query });
-                      console.log("Generation response:", response.data);
 
-                      // Handle the response
                       const responseData = response.data.data || response.data;
                       if (responseData && (responseData.title || responseData.steps)) {
                         const formattedRecipe = formatRecipe(responseData);
 
-                        // Save the generated recipe to the database if it doesn't have an ID
                         if (!formattedRecipe.id) {
                           try {
                             const saveResponse = await axios.post(`${API_URL}/recipes`, formattedRecipe);
-                            console.log("Recipe saved with ID:", saveResponse.data.id);
                             formattedRecipe.id = saveResponse.data.id;
                           } catch (saveError) {
-                            console.error("Error saving generated recipe:", saveError);
                           }
                         }
-
-                        setSelectedRecipe(formattedRecipe);
+                        setMatchingRecipes([formattedRecipe]);
                         setIsLoading(false);
-                        setTimeout(() => setShowSlideshow(true), 50);
                       } else {
                         setError('Unable to generate a recipe. Please try with more specific ingredients or dish name.');
                         setIsLoading(false);
                       }
                     } catch (error) {
-                      console.error("Error generating recipe:", error);
                       setError('Failed to generate a recipe. Please try again.');
                       setIsLoading(false);
                     }
@@ -431,9 +383,6 @@ export default function AnimatedRecipePage() {
             </div>
           </motion.div>
         )}
-
-
-        {/* No additional content on initial state */}
       </div>
     </div>
   );

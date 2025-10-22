@@ -15,6 +15,7 @@ from utils import logger, format_api_response, format_error_response, format_oci
 from database import get_database_status, execute_query_dict, execute_query_dict_single_row, supabase_client
 from recipe_assistant import RecipeAssistant
 from oci_storage import OCIObjectStorage
+from image_generator import generate_and_store_step_image
 
 # Create directories for static files if they don't exist
 os.makedirs(os.path.join(STATIC_DIR, "animations/actions"), exist_ok=True)
@@ -49,6 +50,13 @@ oci_storage = OCIObjectStorage()
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # Helper functions
+def format_item_urls(items: List[Dict], *url_fields: str) -> None:
+    """Format OCI URLs for items in-place."""
+    for item in items:
+        for field in url_fields:
+            if item.get(field):
+                item[field] = format_oci_url(item[field])
+
 def enrich_items_with_images(items: List[Dict], item_type: str) -> None:
     """Fetch and add image URLs to items (ingredients or equipment)."""
     for item in items:
@@ -88,11 +96,14 @@ def enrich_recipe_with_full_data(recipe: Dict) -> Dict:
             (step_id,)
         )
 
-        # Format image URLs
-        if step.get('action_image'):
-            step['action_image'] = format_oci_url(step['action_image'])
-        if step.get('step_image'):
-            step['step_image'] = format_oci_url(step['step_image'])
+        # Enrich step ingredients and equipment with generated images
+        enrich_items_with_images(step['ingredients'], "ingredient")
+        enrich_items_with_images(step['equipment'], "equipment")
+
+        # Format all image URLs
+        format_item_urls(step['ingredients'], 'url')
+        format_item_urls(step['equipment'], 'url')
+        format_item_urls([step], 'action_image', 'step_image', 'image_url')
 
     recipe['ingredients'] = ingredients
     recipe['equipment'] = equipment
@@ -131,9 +142,7 @@ def list_items_with_search(item_type: str, limit: int, offset: int, search: Opti
     result = query_with_pagination.execute()
     items = result.data if result.data else []
 
-    for item in items:
-        if item.get('url'):
-            item['url'] = format_oci_url(item['url'])
+    format_item_urls(items, 'url')
 
     return {"items": items, "total": total_count, "limit": limit, "offset": offset}
 
@@ -236,27 +245,24 @@ async def get_api_status():
 async def parse_recipe(query: RecipeQuery):
     """Parse a recipe query and return structured recipe data."""
     try:
-        # First, search for existing recipes in the database
-        search_term = f"%{query.query}%"
-        search_query = "SELECT DISTINCT * FROM recipes WHERE title ILIKE %s OR description ILIKE %s LIMIT 5"
-        matching_recipes = execute_query_dict(search_query, (search_term, search_term))
+        # First, search for existing recipes in the database using Supabase
+        logger.info(f"Searching for recipes matching: {query.query}")
+
+        # Use Supabase text search (ilike for case-insensitive partial match)
+        result = supabase_client.table("recipes").select("*").or_(
+            f"title.ilike.%{query.query}%,description.ilike.%{query.query}%"
+        ).limit(5).execute()
+
+        matching_recipes = result.data if result.data else []
 
         if matching_recipes and len(matching_recipes) > 0:
             logger.info(f"Found {len(matching_recipes)} matching recipes in database for query: {query.query}")
             enriched_recipes = [enrich_recipe_with_full_data(recipe) for recipe in matching_recipes]
             return format_api_response({"matching_recipes": enriched_recipes})
 
-        # If no matching recipes found, generate a new one
-        logger.info(f"No matching recipes found in database, generating new recipe for: {query.query}")
-        recipe_data = recipe_assistant.generate_recipe(query.query)
-
-        if not recipe_data:
-            raise HTTPException(
-                status_code=404,
-                detail="Could not generate a recipe for the given query"
-            )
-
-        return format_api_response(recipe_data)
+        # If no matching recipes found, return empty list (frontend will show "generate new recipe" button)
+        logger.info(f"No matching recipes found in database for query: {query.query}")
+        return format_api_response({"matching_recipes": []})
     except Exception as e:
         log_exception(e, "Error parsing recipe")
         raise HTTPException(
@@ -266,9 +272,17 @@ async def parse_recipe(query: RecipeQuery):
 
 # Recipe generation endpoint
 @app.post("/recipe/generate")
-async def generate_recipe(query: RecipeQuery):
-    """Generate a new recipe using AI"""
+async def generate_recipe(query: RecipeQuery, save_to_db: bool = True, auto_generate_images: bool = True):
+    """
+    Generate a new recipe using AI.
+
+    Args:
+        save_to_db: If True, save the generated recipe to database
+        auto_generate_images: If True, automatically start generating step images in background
+    """
     try:
+        from recipe_helpers import save_recipe_to_db
+
         logger.info(f"Generating new recipe for: {query.query}")
         recipe_data = recipe_assistant.generate_recipe(query.query)
 
@@ -277,6 +291,18 @@ async def generate_recipe(query: RecipeQuery):
                 status_code=500,
                 detail="Could not generate a recipe for the given query"
             )
+
+        # Save to database if requested (with auto image generation)
+        if save_to_db and recipe_data.get('matching_recipes'):
+            for recipe in recipe_data['matching_recipes']:
+                recipe_id = save_recipe_to_db(recipe, auto_generate_images=auto_generate_images)
+
+                if recipe_id:
+                    recipe['id'] = recipe_id
+                    logger.info(f"Saved recipe {recipe_id} to database")
+
+                    if auto_generate_images:
+                        logger.info(f"Background image generation started for recipe {recipe_id}")
 
         return format_api_response(recipe_data)
     except Exception as e:
@@ -351,6 +377,112 @@ async def get_recipe(recipe_id: int):
         log_exception(e, f"Error getting recipe {recipe_id}")
         raise HTTPException(status_code=500, detail=f"Failed to get recipe: {str(e)}")
 
+# Generate step images for a recipe (with parallel generation)
+@app.post("/recipes/{recipe_id}/generate-step-images")
+async def generate_recipe_step_images(recipe_id: int, parallel: bool = True, force: bool = False):
+    """
+    Generate images for all steps in a recipe using DALL-E.
+
+    Args:
+        parallel: If True, generate all images in parallel (faster but higher load)
+        force: If True, regenerate images even if they already exist
+    """
+    try:
+        from background_tasks import generate_all_step_images_parallel, wait_for_all_images
+
+        # Get recipe details using Supabase
+        recipe_result = supabase_client.table("recipes").select("*").eq("id", recipe_id).execute()
+        if not recipe_result.data or len(recipe_result.data) == 0:
+            raise HTTPException(status_code=404, detail=f"Recipe with ID {recipe_id} not found")
+        recipe = recipe_result.data[0]
+
+        # Get all steps for this recipe using Supabase
+        steps_result = supabase_client.table("recipe_steps").select("*").eq("recipe_id", recipe_id).order("step_number").execute()
+        steps = steps_result.data if steps_result.data else []
+
+        if not steps:
+            raise HTTPException(status_code=404, detail=f"No steps found for recipe {recipe_id}")
+
+        if parallel:
+            # PARALLEL: Generate all images at once
+            logger.info(f"Starting parallel generation of {len(steps)} images for recipe {recipe_id}")
+
+            futures = generate_all_step_images_parallel(
+                recipe_id=recipe_id,
+                recipe_title=recipe['title'],
+                steps=steps,
+                check_existing=not force
+            )
+
+            # Wait for all to complete (with 5 minute timeout)
+            results = wait_for_all_images(futures, timeout=300)
+
+            success_count = sum(1 for r in results if r.get('success'))
+
+            return format_api_response({
+                "recipe_id": recipe_id,
+                "total_steps": len(steps),
+                "successful": success_count,
+                "failed": len(steps) - success_count,
+                "results": results,
+                "mode": "parallel"
+            })
+
+        else:
+            # SEQUENTIAL: Generate one at a time (original behavior)
+            results = []
+            for step in steps:
+                logger.info(f"Generating image for step {step['step_number']}: {step['instruction'][:50]}...")
+
+                image_data = generate_and_store_step_image(
+                    step_id=step['id'],
+                    step_instruction=step['instruction'],
+                    recipe_title=recipe['title'],
+                    recipe_id=recipe_id,
+                    step_number=step['step_number'],
+                    check_existing=not force
+                )
+
+                if image_data:
+                    # Update database using Supabase
+                    from datetime import datetime
+                    supabase_client.table("recipe_steps").update({
+                        "image_url": image_data['image_url'],
+                        "image_prompt": image_data.get('prompt', ''),
+                        "image_generated_at": datetime.now().isoformat()
+                    }).eq("id", step['id']).execute()
+
+                    results.append({
+                        "step_id": step['id'],
+                        "step_number": step['step_number'],
+                        "success": True,
+                        "image_url": image_data['image_url']
+                    })
+                else:
+                    results.append({
+                        "step_id": step['id'],
+                        "step_number": step['step_number'],
+                        "success": False,
+                        "error": "Failed to generate image"
+                    })
+
+            success_count = sum(1 for r in results if r['success'])
+
+            return format_api_response({
+                "recipe_id": recipe_id,
+                "total_steps": len(steps),
+                "successful": success_count,
+                "failed": len(steps) - success_count,
+                "results": results,
+                "mode": "sequential"
+            })
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_exception(e, f"Error generating step images for recipe {recipe_id}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate step images: {str(e)}")
+
 # Ingredients endpoints
 @app.get("/ingredients")
 async def list_ingredients(limit: int = 10, offset: int = 0, search: Optional[str] = None):
@@ -370,8 +502,7 @@ async def get_ingredient(ingredient_id: int):
         if not result.data or len(result.data) == 0:
             raise HTTPException(status_code=404, detail=f"Ingredient with ID {ingredient_id} not found")
         ingredient = result.data[0]
-        if ingredient.get('url'):
-            ingredient['url'] = format_oci_url(ingredient['url'])
+        format_item_urls([ingredient], 'url')
         return format_api_response(ingredient)
     except HTTPException:
         raise
@@ -398,8 +529,7 @@ async def get_equipment(equipment_id: int):
         if not result.data or len(result.data) == 0:
             raise HTTPException(status_code=404, detail=f"Equipment with ID {equipment_id} not found")
         equipment_item = result.data[0]
-        if equipment_item.get('url'):
-            equipment_item['url'] = format_oci_url(equipment_item['url'])
+        format_item_urls([equipment_item], 'url')
         return format_api_response(equipment_item)
     except HTTPException:
         raise
