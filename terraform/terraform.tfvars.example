@@ -1,0 +1,21 @@
+# OCI Configuration
+tenancy_ocid     = "ocid1.tenancy.oc1..example"
+user_ocid        = "ocid1.user.oc1..example"
+fingerprint      = "xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx"
+private_key_path = "~/.oci/oci_api_key.pem"
+compartment_id   = "ocid1.compartment.oc1..example"
+region           = "ca-toronto-1"
+
+# SSH Configuration
+ssh_public_key_path = "~/.ssh/id_rsa.pub"
+admin_ip_cidr       = "YOUR.PUBLIC.IP.ADDRESS/32"  # Get from https://whatismyipaddress.com
+
+# Application Configuration
+domain_name = "sizzle.example.com"  # Optional: your domain
+
+# Supabase Configuration
+supabase_url = "https://YOUR-PROJECT.supabase.co"
+supabase_key = "your-supabase-service-role-key"
+
+# OpenAI Configuration
+openai_api_key = "sk-..."

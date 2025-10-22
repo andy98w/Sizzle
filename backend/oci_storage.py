@@ -4,8 +4,13 @@ import mimetypes
 from typing import Tuple
 from pathlib import Path
 import requests
+from io import BytesIO
+from PIL import Image
 
 mimetypes.init()
+
+# Standard image size for all uploads
+STANDARD_IMAGE_SIZE = (512, 512)
 
 OCI_AVAILABLE = False
 
@@ -103,7 +108,93 @@ class OCIObjectStorage:
             return False
 
 
-def upload_file_to_oci(file_content: bytes, filename: str, content_type: str = "image/png") -> str:
+def crop_transparent_padding(img: Image.Image, alpha_threshold: int = 20) -> Image.Image:
+    """
+    Crop transparent padding from an image to get tight bounds around visible content.
+
+    Args:
+        img: PIL Image in RGBA mode
+        alpha_threshold: Minimum alpha value to consider as visible (0-255)
+
+    Returns:
+        Cropped PIL Image
+    """
+    try:
+        # Get image data
+        pixels = img.load()
+        width, height = img.size
+
+        # Find bounds of non-transparent pixels
+        min_x, min_y = width, height
+        max_x, max_y = 0, 0
+
+        for y in range(height):
+            for x in range(width):
+                # Check alpha channel (4th value in RGBA)
+                if pixels[x, y][3] > alpha_threshold:
+                    min_x = min(min_x, x)
+                    min_y = min(min_y, y)
+                    max_x = max(max_x, x)
+                    max_y = max(max_y, y)
+
+        # If no visible pixels found, return original
+        if min_x >= max_x or min_y >= max_y:
+            return img
+
+        # Crop to visible bounds
+        cropped = img.crop((min_x, min_y, max_x + 1, max_y + 1))
+        logger.info(f"Cropped from {width}x{height} to {cropped.size[0]}x{cropped.size[1]}")
+        return cropped
+
+    except Exception as e:
+        logger.error(f"Error cropping transparent padding: {str(e)}")
+        return img
+
+
+def resize_image(image_content: bytes, target_size: Tuple[int, int] = STANDARD_IMAGE_SIZE) -> bytes:
+    """
+    Resize an image to a standard size while maintaining aspect ratio and transparency.
+    Intelligently crops transparent padding before resizing.
+
+    Args:
+        image_content: The image content as bytes
+        target_size: Target size (width, height)
+
+    Returns:
+        Resized image as bytes in PNG format with transparent background
+    """
+    try:
+        img = Image.open(BytesIO(image_content))
+
+        # Ensure image has alpha channel for transparency
+        if img.mode != 'RGBA':
+            img = img.convert('RGBA')
+
+        # Crop transparent padding to get tight bounds around actual content
+        img = crop_transparent_padding(img)
+
+        # Resize with high-quality resampling, maintaining aspect ratio
+        img.thumbnail(target_size, Image.Resampling.LANCZOS)
+
+        # Create a new transparent image with the target size
+        new_img = Image.new('RGBA', target_size, (0, 0, 0, 0))
+
+        # Paste the resized image centered
+        paste_x = (target_size[0] - img.size[0]) // 2
+        paste_y = (target_size[1] - img.size[1]) // 2
+        new_img.paste(img, (paste_x, paste_y), img)
+
+        # Convert back to bytes
+        output = BytesIO()
+        new_img.save(output, format='PNG', optimize=True)
+        return output.getvalue()
+
+    except Exception as e:
+        logger.error(f"Error resizing image: {str(e)}")
+        return image_content
+
+
+def upload_file_to_oci(file_content: bytes, filename: str, content_type: str = "image/png", resize: bool = True) -> str:
     """
     Upload file content (bytes) to OCI Object Storage.
 
@@ -111,6 +202,7 @@ def upload_file_to_oci(file_content: bytes, filename: str, content_type: str = "
         file_content: The file content as bytes
         filename: The filename to use in OCI storage
         content_type: MIME type of the file
+        resize: If True, resize the image to standard size before upload
 
     Returns:
         Full URL to the uploaded file, or empty string if upload failed
@@ -120,12 +212,16 @@ def upload_file_to_oci(file_content: bytes, filename: str, content_type: str = "
         return ""
 
     try:
+        # Resize image if requested and it's an image file
+        if resize and content_type.startswith('image/'):
+            logger.info(f"Resizing image to {STANDARD_IMAGE_SIZE} before upload")
+            file_content = resize_image(file_content)
+
         par_upload_url = f"{OCI_PAR_URL.rstrip('/')}/{filename}"
         response = requests.put(par_upload_url, data=file_content, headers={'Content-Type': content_type})
 
         if response.status_code in (200, 201):
             logger.info(f"File uploaded successfully to OCI: {filename}")
-            # Return the full OCI URL
             return par_upload_url
         else:
             logger.error(f"Failed to upload to OCI. Status: {response.status_code}, Response: {response.text}")
