@@ -137,15 +137,3 @@ Backend API (FastAPI)
 └─────────────┴──────────────┴─────────────┘
 ```
 
-## TODO
-
-- [ ] Add user authentication and profiles
-- [ ] Implement recipe rating and favorites
-- [ ] Add cooking timers and notifications
-- [ ] Create mobile-responsive design
-- [ ] Add recipe sharing functionality
-- [ ] Implement recipe collections/cookbooks
-- [ ] Add nutritional information
-- [ ] Support for dietary restrictions and filters
-- [ ] Recipe modification and saving custom versions
-- [ ] Shopping list generation from recipes

@@ -4,45 +4,25 @@ The backend server for the Sizzle recipe assistant application. This service pro
 
 ## Features
 
-- Recipe generation using GPT models
-- Database integration for storing recipes, ingredients, and steps
-- Image storage with Oracle Cloud Infrastructure (OCI) or local fallback
-- RESTful API for frontend integration
+- AI-powered recipe generation using GPT-4
+- DALL-E 3 integration for automatic step image generation
+- Parallel image generation for faster recipe creation
+- Database integration with Supabase (PostgreSQL)
+- Image storage with Oracle Cloud Infrastructure (OCI)
+- Recipe overwrite functionality to prevent duplicates
+- Background task processing for async operations
+- RESTful API with comprehensive endpoints
 
 ## Setup
 
 ### Prerequisites
 
 - Python 3.9 or higher
-- PostgreSQL database (optional, can use Supabase)
-- Oracle Cloud Infrastructure account (optional, for cloud storage)
+- OpenAI API key with access to GPT-4 and DALL-E 3
+- Supabase account and project
+- Oracle Cloud Infrastructure account for object storage
 
 ### Installation
-
-1. Clone the repository:
-
-```bash
-git clone https://github.com/yourusername/sizzle.git
-cd sizzle/backend
-```
-
-2. Run the installation script:
-
-```bash
-python install.py
-```
-
-This will:
-- Create a virtual environment
-- Install required dependencies
-- Set up necessary directories
-- Create a template .env file
-
-3. Configure your environment variables by editing the `.env` file.
-
-### Manual Installation
-
-If you prefer to set up manually:
 
 1. Create a virtual environment:
 
@@ -53,10 +33,11 @@ python -m venv venv
 2. Activate the virtual environment:
 
 ```bash
-# On Windows
-venv\\Scripts\\activate
 # On macOS/Linux
 source venv/bin/activate
+
+# On Windows
+venv\Scripts\activate
 ```
 
 3. Install dependencies:
@@ -65,24 +46,29 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-4. Create a `.env` file with the required configuration.
+4. Create a `.env` file with the required configuration (see Environment Variables section below).
 
 ## Running the Application
 
-1. Start the backend server:
+1. Activate the virtual environment:
 
 ```bash
-./run_sizzle.sh
+source venv/bin/activate  # On macOS/Linux
 ```
 
-Or manually:
+2. Start the backend server:
 
 ```bash
-source venv/bin/activate
 python app.py
 ```
 
-2. The API will be available at `http://localhost:8000`
+Or using uvicorn directly:
+
+```bash
+uvicorn app:app --reload --host 0.0.0.0 --port 8000
+```
+
+3. The API will be available at `http://localhost:8000`
 
 ## API Documentation
 
@@ -95,13 +81,9 @@ Once the server is running, you can access the API documentation at:
 
 The following environment variables can be configured in the `.env` file:
 
-### Database Configuration
-- `DB_HOST`: Database host (default: localhost)
-- `DB_PORT`: Database port (default: 5432)
-- `DB_USER`: Database username (default: postgres)
-- `DB_PASSWORD`: Database password (default: postgres)
-- `DB_NAME`: Database name (default: sizzle)
-- `DATABASE_URL`: Full connection string (alternative to individual settings)
+### Supabase Configuration
+- `SUPABASE_URL`: Your Supabase project URL
+- `SUPABASE_KEY`: Your Supabase anon/service key
 
 ### API Configuration
 - `API_PORT`: Port for the API server (default: 8000)
@@ -119,41 +101,63 @@ The following environment variables can be configured in the `.env` file:
 - `OCI_CONFIG_FILE`: Path to OCI config file (default: ~/.oci/config)
 - `OCI_CONFIG_PROFILE`: OCI config profile (default: DEFAULT)
 - `OCI_NAMESPACE`: OCI namespace
+- `OCI_REGION`: OCI region (e.g., us-ashburn-1)
 
 ## Project Structure
 
 ```
 backend/
-├── app.py                # Main FastAPI application
-├── config.py             # Configuration settings
-├── database.py           # Database connection and operations
-├── db_manager.py         # Database manager (legacy)
-├── install.py            # Installation script
-├── oci_storage.py        # Oracle Cloud storage integration
-├── recipe_assistant.py   # Recipe generation with OpenAI
-├── requirements.txt      # Python dependencies
-├── run_sizzle.sh         # Startup script
-├── setup_env.py          # Environment setup utilities
-├── utils.py              # Utility functions
-└── static/               # Static files directory
-    ├── animations/       # Animation files
-    └── images/           # Image files
+├── app.py                  # Main FastAPI application
+├── config.py               # Configuration settings
+├── database.py             # Database connection and operations
+├── recipe_assistant.py     # Recipe generation with OpenAI GPT-4
+├── recipe_helpers.py       # Recipe database operations
+├── image_generator.py      # DALL-E 3 image generation
+├── background_tasks.py     # Async/parallel task processing
+├── oci_storage.py          # Oracle Cloud storage integration
+├── utils.py                # Utility functions and logging
+├── requirements.txt        # Python dependencies
+├── scripts/
+│   └── add_step_images.sql # Database migration for step images
+└── static/                 # Static files directory
+    └── images/
+        └── steps/          # Generated step images
 ```
+
+## API Endpoints
+
+- `GET /api-status` - Check API and dependency status
+- `POST /recipe/parse` - Search for existing recipes
+- `POST /recipe/generate` - Generate new recipe with AI
+- `GET /recipes` - List all recipes (paginated)
+- `GET /recipes/{id}` - Get recipe with full details
+- `POST /recipes/{id}/generate-step-images` - Generate images for steps
+- `GET /ingredients` - List ingredients with search
+- `GET /equipment` - List equipment with search
+
+## Key Modules
+
+### `recipe_helpers.py`
+Handles all recipe database operations including:
+- Recipe creation and updates
+- Automatic overwrite of duplicate recipes
+- Ingredient and equipment linking
+- Step creation with background image generation
+
+### `image_generator.py`
+DALL-E 3 integration for generating cooking images:
+- Custom prompt engineering for consistent style
+- Automatic upload to OCI storage
+- Duplicate prevention with deterministic naming
+
+### `background_tasks.py`
+Async task processing:
+- Parallel image generation for multiple steps
+- ThreadPoolExecutor-based task management
+- Non-blocking recipe creation
 
 ## Development
 
 ### Code Style
 
-This project follows PEP 8 guidelines for Python code style. 
-
-### Testing
-
-Run tests with:
-
-```bash
-pytest
-```
-
-## License
-
-[MIT License](LICENSE)
+This project follows PEP 8 guidelines for Python code style.
