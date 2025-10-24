@@ -18,15 +18,31 @@ const itemOffsets: Record<string, { jiggle: number, jiggleRotate: number, swipe:
 // Cache for fetched image URLs to prevent re-fetching
 const imageUrlCache: Record<string, string> = {};
 
-// Cache for analyzed image bounds to prevent re-analyzing
-const imageBoundsCache: Record<string, {
-  cropX: number;
-  cropY: number;
-  cropWidth: number;
-  cropHeight: number;
-  scaleX: number;
-  scaleY: number;
-}> = {};
+// Helper function to extract quantity count from ingredient quantity string
+const getQuantityCount = (quantity: string | undefined, isMeasurement: boolean = false): number => {
+  if (!quantity) return 1;
+
+  // For measurement units (tsp, tbsp, cup, oz, g, ml, etc.), always return 1
+  // We want to show the container, not multiple containers
+  const measurementUnits = ['tsp', 'tbsp', 'cup', 'oz', 'ounce', 'lb', 'pound', 'g', 'gram', 'kg', 'ml', 'l', 'liter', 'qt', 'quart', 'pt', 'pint', 'gal', 'gallon'];
+  const quantityLower = quantity.toLowerCase();
+  if (measurementUnits.some(unit => quantityLower.includes(unit))) {
+    return 1;
+  }
+
+  // Extract the leading number from the quantity string
+  // Examples: "8 large" -> 8, "2 cups" -> 1 (caught by measurement check above), "1/2 tsp" -> 1
+  const match = quantity.match(/^(\d+)/);
+  if (match) {
+    const count = parseInt(match[1], 10);
+    // Cap at reasonable maximum to avoid performance issues
+    return Math.min(count, 20);
+  }
+
+  return 1;
+};
+
+// Image bounds cache removed - all images are now standardized to 512x512 with 70% fill
 
 // Function to get consistent random values for an item
 const getItemOffsets = (id: string) => {
@@ -158,65 +174,7 @@ const createBodyForShape = (
   }
 };
 
-// Function to analyze image and detect visible bounds (removes transparent padding)
-const analyzeImageBounds = (img: HTMLImageElement): {
-  cropX: number;
-  cropY: number;
-  cropWidth: number;
-  cropHeight: number;
-  scaleX: number;
-  scaleY: number;
-} => {
-  const canvas = document.createElement('canvas');
-  canvas.width = img.naturalWidth || img.width;
-  canvas.height = img.naturalHeight || img.height;
-  const ctx = canvas.getContext('2d');
-
-  if (!ctx) {
-    return { cropX: 0, cropY: 0, cropWidth: canvas.width, cropHeight: canvas.height, scaleX: 1, scaleY: 1 };
-  }
-
-  ctx.drawImage(img, 0, 0);
-  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const pixels = imageData.data;
-
-  let minX = canvas.width;
-  let minY = canvas.height;
-  let maxX = 0;
-  let maxY = 0;
-
-  // Find bounds of non-transparent pixels
-  for (let y = 0; y < canvas.height; y++) {
-    for (let x = 0; x < canvas.width; x++) {
-      const index = (y * canvas.width + x) * 4;
-      const alpha = pixels[index + 3];
-
-      if (alpha > 20) { // Consider pixels with alpha > 20 as visible
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
-      }
-    }
-  }
-
-  // If no visible pixels found, return full image
-  if (minX > maxX || minY > maxY) {
-    return { cropX: 0, cropY: 0, cropWidth: canvas.width, cropHeight: canvas.height, scaleX: 1, scaleY: 1 };
-  }
-
-  const cropWidth = maxX - minX + 1;
-  const cropHeight = maxY - minY + 1;
-
-  return {
-    cropX: minX,
-    cropY: minY,
-    cropWidth,
-    cropHeight,
-    scaleX: cropWidth / canvas.width,
-    scaleY: cropHeight / canvas.height
-  };
-};
+// analyzeImageBounds function removed - all images are now standardized to 512x512 with 70% fill
 
 interface Item {
   id: string;
@@ -228,18 +186,10 @@ interface Item {
   hasImageError?: boolean;
   body?: Matter.Body; // Matter.js body reference
   shape: ShapeDefinition; // Store shape definition for rendering
-  imageBounds?: { // Store analyzed image bounds for cropping
-    cropX: number;
-    cropY: number;
-    cropWidth: number;
-    cropHeight: number;
-    scaleX: number;
-    scaleY: number;
-  };
 }
 
 interface PhysicsCounterProps {
-  ingredients: { name: string; url?: string; imageUrl?: string }[];
+  ingredients: { name: string; quantity?: string; url?: string; imageUrl?: string }[];
   equipment: { name: string; url?: string; imageUrl?: string }[];
   onSlideChange?: (direction?: 1 | -1) => void;
   isVisible?: boolean;
@@ -521,14 +471,9 @@ const PhysicsCounterMatterJS = React.forwardRef<{
       const itemsPerRow = Math.max(3, Math.floor(containerSize.width / 100));
 
       // Add ingredients
+      let physicsObjectIndex = 0;
       for (let i = 0; i < ingredients.length; i++) {
         const ingredient = ingredients[i];
-        const col = i % itemsPerRow;
-        const row = Math.floor(i / itemsPerRow);
-        const spacing = containerSize.width / (itemsPerRow + 1);
-        const x = spacing * (col + 1);
-        const y = -100 - (40 * row);
-        const size = 80;
 
         // Fetch image URL from database or cache
         let imageUrl = toAbsoluteUrl(ingredient.url || ingredient.imageUrl);
@@ -553,38 +498,54 @@ const PhysicsCounterMatterJS = React.forwardRef<{
           imageUrl = 'https://objectstorage.ca-toronto-1.oraclecloud.com/p/LHruGKILbQNvy2_V89soZbDGmCXZ-RecXxEAAzoKdZx1y9Tcuz0J-gEmWtIcNZhJ/n/yzep9haqilyk/b/SizzleGeneratedImages/o/placeholder_ingredient.png';
         }
 
-        if (imageUrl) totalImageCount++;
-
         // Determine shape based on ingredient name
         const shape = getShapeForItem(ingredient.name, 'ingredient');
 
-        // Create Matter.js body with appropriate shape
-        const body = createBodyForShape(x, y, size, shape, `ingredient-${i}`);
+        // Get quantity count - create multiple objects for "8 eggs", but only 1 for "1/2 cup"
+        const quantityCount = getQuantityCount(ingredient.quantity);
+        console.log(`🔢 PhysicsCounter: Creating ${quantityCount} physics objects for ${ingredient.quantity} ${ingredient.name}`);
 
-        Matter.Composite.add(engineRef.current!.world, body);
+        // Create multiple physics objects based on quantity
+        for (let q = 0; q < quantityCount; q++) {
+          const col = physicsObjectIndex % itemsPerRow;
+          const row = Math.floor(physicsObjectIndex / itemsPerRow);
+          const spacing = containerSize.width / (itemsPerRow + 1);
+          const x = spacing * (col + 1);
+          const y = -100 - (40 * row);
+          const size = 110;
 
-        allItems.push({
-          id: `ingredient-${i}`,
-          name: ingredient.name,
-          type: 'ingredient',
-          size,
-          color: getColorFromString(ingredient.name, 'ingredient'),
-          imageUrl,
-          hasImageError: false,
-          body,
-          shape
-        });
+          if (imageUrl && q === 0) totalImageCount++; // Count image URL only once per ingredient
+
+          // Create Matter.js body with appropriate shape
+          const body = createBodyForShape(x, y, size, shape, `ingredient-${i}-${q}`);
+
+          Matter.Composite.add(engineRef.current!.world, body);
+
+          allItems.push({
+            id: `ingredient-${i}-${q}`,
+            name: ingredient.name,
+            type: 'ingredient',
+            size,
+            color: getColorFromString(ingredient.name, 'ingredient'),
+            imageUrl,
+            hasImageError: false,
+            body,
+            shape
+          });
+
+          physicsObjectIndex++;
+        }
       }
 
-      // Add equipment
+      // Add equipment (always 1 object per equipment, regardless of quantity)
       for (let i = 0; i < equipment.length; i++) {
         const equip = equipment[i];
-        const col = i % itemsPerRow;
-        const row = Math.floor(i / itemsPerRow);
+        const col = physicsObjectIndex % itemsPerRow;
+        const row = Math.floor(physicsObjectIndex / itemsPerRow);
         const spacing = containerSize.width / (itemsPerRow + 1);
         const x = containerSize.width - (spacing * (col + 1));
         const y = -100 - (40 * row);
-        const size = 90;
+        const size = 110;
 
         // Fetch image URL from database or cache
         let imageUrl = toAbsoluteUrl(equip.url || equip.imageUrl);
@@ -630,6 +591,8 @@ const PhysicsCounterMatterJS = React.forwardRef<{
           body,
           shape
         });
+
+        physicsObjectIndex++;
       }
 
       totalImages.current = totalImageCount;
@@ -658,67 +621,7 @@ const PhysicsCounterMatterJS = React.forwardRef<{
 
   const handleImageLoad = (id: string, img: HTMLImageElement) => {
     console.log(`Image loaded successfully for item: ${id}`);
-
-    // Check if bounds are already cached
-    const cacheKey = img.src;
-    let bounds = imageBoundsCache[cacheKey];
-
-    if (!bounds) {
-      // Analyze image bounds to detect transparent areas (only if not cached)
-      try {
-        bounds = analyzeImageBounds(img);
-        console.log(`Analyzed bounds for ${id}:`, bounds);
-        // Cache the analyzed bounds
-        imageBoundsCache[cacheKey] = bounds;
-      } catch (error) {
-        console.warn(`Failed to analyze image bounds for ${id}:`, error);
-        setImagesLoaded(prev => prev + 1);
-        return;
-      }
-    } else {
-      console.log(`Using cached bounds for ${id}`);
-    }
-
-    // Update item with bounds information AND resize the physics body
-    setItems(prevItems =>
-      prevItems.map(item => {
-        if (item.id === id && item.body && engineRef.current) {
-          // Calculate the scale factor based on actual visible content
-          const avgScale = Math.min(bounds.scaleX, bounds.scaleY);
-
-          // Only update if there's significant transparent padding (scale < 0.9)
-          if (avgScale < 0.9 && !item.imageBounds) {
-            console.log(`Resizing physics body for ${id} with scale: ${avgScale}`);
-
-            // Remove old body
-            Matter.Composite.remove(engineRef.current.world, item.body);
-
-            // Create new body with adjusted size
-            const adjustedSize = item.size * avgScale;
-            const newBody = createBodyForShape(
-              item.body.position.x,
-              item.body.position.y,
-              adjustedSize / 0.75, // Compensate for the 0.75 bodyScale already applied
-              item.shape,
-              item.id
-            );
-
-            // Preserve velocity
-            Matter.Body.setVelocity(newBody, item.body.velocity);
-            Matter.Body.setAngularVelocity(newBody, item.body.angularVelocity);
-
-            // Add new body to world
-            Matter.Composite.add(engineRef.current.world, newBody);
-
-            return { ...item, imageBounds: bounds, body: newBody };
-          }
-
-          return { ...item, imageBounds: bounds };
-        }
-        return item;
-      })
-    );
-
+    // Since all images are standardized to 512x512 with 70% fill, we don't need dynamic resizing
     setImagesLoaded(prev => prev + 1);
   };
 
@@ -898,15 +801,9 @@ const PhysicsCounterMatterJS = React.forwardRef<{
         const { x, y } = item.body.position;
         const angle = item.body.angle;
 
-        // Calculate display dimensions based on shape
-        let displayWidth = item.size;
-        let displayHeight = item.size;
-
-        if (item.shape.type === 'rectangle') {
-          const ratio = item.shape.widthRatio || 1.0;
-          displayWidth = item.size * ratio;
-          displayHeight = item.size;
-        }
+        // Use consistent display size for all items regardless of physics shape
+        // This ensures all images appear the same size visually
+        const displaySize = item.size;
 
         return (
           <div
@@ -915,8 +812,8 @@ const PhysicsCounterMatterJS = React.forwardRef<{
               position: 'absolute',
               left: x,
               top: y,
-              width: displayWidth,
-              height: displayHeight,
+              width: displaySize,
+              height: displaySize,
               backgroundColor: 'transparent',
               display: 'flex',
               alignItems: 'center',
@@ -938,12 +835,10 @@ const PhysicsCounterMatterJS = React.forwardRef<{
                 alt={item.name}
                 crossOrigin="anonymous"
                 style={{
-                  width: item.imageBounds ? `${100 / item.imageBounds.scaleX}%` : '100%',
-                  height: item.imageBounds ? `${100 / item.imageBounds.scaleY}%` : '100%',
+                  width: '100%',
+                  height: '100%',
                   objectFit: 'contain',
-                  objectPosition: item.imageBounds
-                    ? `${-item.imageBounds.cropX / item.imageBounds.cropWidth * 100}% ${-item.imageBounds.cropY / item.imageBounds.cropHeight * 100}%`
-                    : 'center'
+                  objectPosition: 'center'
                 }}
                 onLoad={(e) => handleImageLoad(item.id, e.currentTarget)}
                 onError={() => handleImageError(item.id)}

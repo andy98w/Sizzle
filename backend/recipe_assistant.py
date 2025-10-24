@@ -70,6 +70,8 @@ Use this exact structure:
     {{
       "id": 1,
       "instruction": "Clear, detailed instruction for this step",
+      "output": "The resulting product/state after this step (e.g., 'beaten eggs in bowl', 'melted butter in pan', 'mixed dough')",
+      "dependencies": [2, 3],
       "ingredients": [
         {{"name": "Ingredient used", "quantity": "Amount"}}
       ],
@@ -84,9 +86,33 @@ CRITICAL GUIDELINES:
 1. Ingredient Names: Use simple, common names (e.g., "Rice" not "Japanese short-grain rice", "Salt" not "Sea salt")
 2. Equipment Names: Use generic names (e.g., "Bowl" not "Large wooden bowl", "Pot" not "3-quart saucepan")
 3. Steps: Each step should be clear and actionable. Only include ingredients/equipment actually used in that specific step.
-4. Quantities: Always include units (cups, tbsp, tsp, oz, g, etc.)
-5. Servings: Must be an integer number
-6. Times: Format as "X mins" or "X hours" (e.g., "15 mins", "1 hour", "2 hours 30 mins")
+4. Step Output: REQUIRED - Describe the EXACT VISUAL STATE and physical appearance of what the step produces. ALWAYS include the container/equipment where the food is located (bowl, pot, skillet, plate, etc.). Be EXTREMELY specific about the form and state of ingredients, especially transformations. This is critical for accurate image generation.
+
+   KEY TRANSFORMATIONS TO DESCRIBE:
+   - EGGS: "cracked raw eggs with visible yolks and whites in bowl" → "pale yellow whisked egg liquid in bowl" → "fluffy yellow scrambled egg curds in skillet"
+   - BUTTER: "solid butter cube" → "melted golden liquid butter pooled in skillet"
+   - FLOUR: "white flour powder in bowl" → "shaggy dough mixture in bowl" → "smooth elastic dough ball"
+   - VEGETABLES: "whole tomato" → "diced tomato cubes" → "soft cooked tomato pieces"
+
+   Examples:
+   - "cracked raw eggs with visible yellow yolks and clear whites in bowl" (not "raw eggs in bowl")
+   - "pale yellow whisked egg liquid in bowl" (not "whisked eggs" or "egg mixture")
+   - "melted golden liquid butter pooled in hot skillet" (not just "butter melted")
+   - "smooth elastic dough ball on floured counter" (not just "dough formed")
+   - "pasta boiling in bubbling water in pot" (good - describes the action)
+   - "pale yellow egg liquid poured into buttered skillet" (not "egg mixture added")
+   - "fluffy yellow scrambled egg curds in skillet" (not "eggs cooking")
+
+   CRITICAL: Describe the FORM (liquid, solid, powder, chunks, curds, etc.) and COLOR when relevant. If ingredients are in a container from a previous step, ALWAYS mention that container!
+   Always specify: exact form/state, color when relevant, texture, AND the container/location.
+5. Step Dependencies: CRITICAL - List which previous step IDs this step depends on. Empty array [] if it's a starting step. Use this to track parallel cooking workflows. Examples:
+   - Step 1 (crack eggs): dependencies: []
+   - Step 2 (whisk eggs): dependencies: [1]
+   - Step 3 (melt butter in parallel): dependencies: []
+   - Step 4 (combine eggs and butter): dependencies: [2, 3]
+6. Quantities: Always include units (cups, tbsp, tsp, oz, g, etc.)
+7. Servings: Must be an integer number
+8. Times: Format as "X mins" or "X hours" (e.g., "15 mins", "1 hour", "2 hours 30 mins")
 
 OUTPUT ONLY THE JSON OBJECT."""),
             MessagesPlaceholder(variable_name="chat_history"),

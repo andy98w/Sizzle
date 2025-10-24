@@ -18,13 +18,13 @@ def generate_step_image_async(
     step_instruction: str,
     recipe_id: int,
     recipe_title: str,
-    check_existing: bool = True
+    check_existing: bool = False
 ) -> Future:
     """
     Start generating a step image in the background.
 
     Args:
-        check_existing: If True, skip generation if image already exists
+        check_existing: If True, skip generation if image already exists (default: False for development)
 
     Returns a Future that can be used to check status or get result.
     """

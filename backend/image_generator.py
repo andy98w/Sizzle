@@ -8,59 +8,73 @@ import base64
 from datetime import datetime
 from typing import Optional, Dict, Any
 from openai import OpenAI
+import replicate
 
-from config import OPENAI_API_KEY, OCI_BUCKET_NAME, OCI_NAMESPACE, OCI_REGION
+from config import (
+    OPENAI_API_KEY, OCI_BUCKET_NAME, OCI_NAMESPACE, OCI_REGION,
+    REPLICATE_API_TOKEN, STABLE_DIFFUSION_MODEL
+)
 from utils import logger, log_exception, format_oci_url
 from oci_storage import upload_file_to_oci
 
 # Initialize OpenAI client
 client = OpenAI(api_key=OPENAI_API_KEY)
 
+# Image generation backend: 'dalle' or 'stable_diffusion'
+IMAGE_GENERATION_BACKEND = os.environ.get('IMAGE_GENERATION_BACKEND', 'stable_diffusion')
+
 
 def generate_step_image_prompt(
     step_instruction: str,
     recipe_title: str,
     ingredients: list = None,
-    equipment: list = None
+    equipment: list = None,
+    step_output: str = None,
+    dependency_outputs: list = None
 ) -> str:
     """
-    Generate a DALL-E prompt from a recipe step instruction with ingredients and equipment.
+    Generate an optimized Stable Diffusion prompt from a recipe step instruction.
+
+    Creates simple, clean single-object illustrations optimized for SD.
+    Uses dependency graph to avoid hallucinating items from unrelated previous steps.
 
     Args:
         step_instruction: The step instruction text
         recipe_title: The recipe title for context
         ingredients: List of ingredient names for this step
         equipment: List of equipment names for this step
+        step_output: The product/result of this step (e.g., "beaten eggs in bowl")
+        dependency_outputs: List of outputs from steps this step depends on
 
     Returns:
-        A well-formatted DALL-E prompt
+        A well-formatted SD prompt (under 200 chars for optimal results)
     """
-    # Build the scene description with ingredients and equipment
-    items = []
+    # Build item list from ingredients and equipment
+    items_to_show = []
     if ingredients:
-        items.extend([f"{ing}" for ing in ingredients])
+        items_to_show.extend(ingredients)
     if equipment:
-        items.extend([f"{eq}" for eq in equipment])
+        items_to_show.extend(equipment)
 
-    items_str = ", ".join(items) if items else ""
+    items_list = ", ".join(items_to_show) if items_to_show else "cooking items"
 
-    # Create a minimal, flat illustration-style prompt
-    if items_str:
-        prompt = f"""Flat illustration showing ONLY {items_str} for '{step_instruction}'.
-Style: Extremely minimal flat design, simple vector art, neutral beige/cream background, birds-eye overhead view,
-ONLY show the specific items listed: {items_str}, nothing else.
-Include hands if action is needed. No extra decorations, no patterns, no textures, no shadows, no labels, no text.
-Clean simple shapes with flat colors, 3-4 muted colors maximum (beige, brown, cream tones).
-Organized composition like a cooking diagram. NO random tools or ingredients not mentioned."""
+    # Use output if available, otherwise use instruction
+    # For steps with dependencies, the output already describes the merge
+    if step_output:
+        subject = step_output.lower()
     else:
-        prompt = f"""Flat illustration of {step_instruction.lower()} for {recipe_title}.
-Style: Extremely minimal flat design, simple vector art, neutral beige/cream background, birds-eye overhead view,
-ONLY show items directly needed for this action, nothing else.
-Include hands if action is needed. No extra decorations, no patterns, no textures, no shadows, no labels, no text.
-Clean simple shapes with flat colors, 3-4 muted colors maximum (beige, brown, cream tones).
-Organized composition like a cooking diagram."""
+        instruction_lower = step_instruction.lower()
+        subject = f"{instruction_lower}, {items_list}"
 
-    return prompt[:1000]  # DALL-E has a 1000 character limit
+    # Ultra-minimal prompt - less room for hallucination
+    # The output already captures dependencies (e.g., "egg mixture cooking in skillet")
+    # so we don't need to explicitly list dependency outputs
+
+    # Be very explicit: ONLY show what's mentioned, nothing else
+    prompt = f"simple flat illustration, overhead view, ONLY {subject}, no extra objects, plain tan background, vector style"
+
+    # Keep very short
+    return prompt[:180]
 
 
 def generate_image_with_dalle(prompt: str, size: str = "1792x1024", quality: str = "standard") -> Optional[str]:
@@ -92,6 +106,64 @@ def generate_image_with_dalle(prompt: str, size: str = "1792x1024", quality: str
 
     except Exception as e:
         log_exception(e, "Error generating image with DALL-E")
+        return None
+
+
+def generate_image_with_stable_diffusion(prompt: str, width: int = 1792, height: int = 1024, seed: int = 42) -> Optional[str]:
+    """
+    Generate an image using Stable Diffusion via Replicate.
+
+    Optimized for flat vector infographic-style recipe illustrations.
+
+    Args:
+        prompt: The text prompt for image generation
+        width: Image width (default 1792 for landscape)
+        height: Image height (default 1024 for landscape)
+        seed: Random seed for reproducibility (ensures consistent style)
+
+    Returns:
+        URL of the generated image, or None if generation failed
+    """
+    try:
+        if not REPLICATE_API_TOKEN:
+            logger.error("REPLICATE_API_TOKEN not configured")
+            return None
+
+        logger.info(f"Generating image with Stable Diffusion: {prompt[:100]}...")
+
+        # Set the API token
+        os.environ["REPLICATE_API_TOKEN"] = REPLICATE_API_TOKEN
+
+        # Generic negative prompt - avoid hallucinations without blocking specific foods
+        # Focus on rejecting ANY objects not explicitly mentioned in the prompt
+        negative_prompt = "extra objects, additional objects, unlisted items, objects not in prompt, items not mentioned, random objects, unrelated items, additional cookware, extra utensils, extra dishes, extra plates, extra tools, disconnected objects, floating objects, separate pieces, text, words, letters, numbers, labels, writing, font, typography, realistic, 3D, photo, photograph, side view, angled view, perspective, gradient, heavy texture, detailed shading, noisy background, watermark, blur, noise, unnecessary decorations, excessive patterns, complex details, harsh shadows, highlights, depth effect, multiple backgrounds, cluttered"
+
+        # Generate image with MAXIMUM constraint
+        output = replicate.run(
+            STABLE_DIFFUSION_MODEL,
+            input={
+                "prompt": prompt,
+                "width": width,
+                "height": height,
+                "seed": seed,  # Fixed seed for consistency
+                "num_inference_steps": 50,  # Maximum steps for accuracy
+                "guidance_scale": 15.0,  # ULTRA high = maximum prompt adherence
+                "scheduler": "DPMSolverMultistep",
+                "negative_prompt": negative_prompt
+            }
+        )
+
+        # Output is a list of URLs
+        if output and len(output) > 0:
+            image_url = output[0]
+            logger.info(f"Image generated successfully with Stable Diffusion: {image_url}")
+            return image_url
+        else:
+            logger.error("Stable Diffusion returned no output")
+            return None
+
+    except Exception as e:
+        log_exception(e, "Error generating image with Stable Diffusion")
         return None
 
 
@@ -181,27 +253,62 @@ def generate_and_store_step_image(
 
         logger.info(f"Step {step_id} ingredients: {ingredients}, equipment: {equipment}")
 
-        # Generate prompt with ingredients and equipment
-        prompt = generate_step_image_prompt(step_instruction, recipe_title, ingredients, equipment)
+        # Fetch step output and dependencies for graph-based workflow
+        step_result = supabase_client.table("recipe_steps").select("output, dependencies, step_number").eq("id", step_id).execute()
+        step_output = None
+        dependency_outputs = []
+
+        if step_result.data and len(step_result.data) > 0:
+            step_data = step_result.data[0]
+            step_output = step_data.get('output')
+            dependencies = step_data.get('dependencies', [])
+            current_step_number = step_data.get('step_number')
+
+            if step_output:
+                logger.info(f"Step {step_id} output: {step_output}")
+
+            # Fetch outputs from dependency steps
+            if dependencies:
+                logger.info(f"Step {step_id} depends on steps: {dependencies}")
+                for dep_step_num in dependencies:
+                    dep_result = supabase_client.table("recipe_steps").select("output").eq("recipe_id", recipe_id).eq("step_number", dep_step_num).execute()
+                    if dep_result.data and len(dep_result.data) > 0:
+                        dep_output = dep_result.data[0].get('output')
+                        if dep_output:
+                            dependency_outputs.append(dep_output)
+                            logger.info(f"  Dependency step {dep_step_num} output: {dep_output}")
+
+        # Generate prompt with dependencies context
+        prompt = generate_step_image_prompt(step_instruction, recipe_title, ingredients, equipment, step_output, dependency_outputs)
         logger.info(f"Generated prompt for step {step_id}: {prompt}")
 
-        # Generate image with DALL-E
-        dalle_url = generate_image_with_dalle(prompt)
-        if not dalle_url:
+        # Generate image based on configured backend
+        if IMAGE_GENERATION_BACKEND == 'stable_diffusion':
+            # Use unique seed per step for varied compositions while maintaining determinism
+            # This prevents artifact carryover between steps (e.g., hallucinated objects appearing in same position)
+            step_seed = 1000 + step_id  # Unique but deterministic seed for each step
+            logger.info(f"Using seed {step_seed} for step {step_id}")
+            image_url = generate_image_with_stable_diffusion(prompt, seed=step_seed)
+        else:
+            # Fall back to DALL-E
+            image_url = generate_image_with_dalle(prompt)
+
+        if not image_url:
             logger.error(f"Failed to generate image for step {step_id}")
             return None
 
         # Download the generated image
-        image_bytes = download_image(dalle_url)
+        image_bytes = download_image(image_url)
         if not image_bytes:
             logger.error(f"Failed to download generated image for step {step_id}")
             return None
 
-        # Upload to OCI (will overwrite if exists)
+        # Upload to OCI without resizing (step images should maintain landscape aspect ratio)
         oci_url = upload_file_to_oci(
             file_content=image_bytes,
             filename=filename,
-            content_type="image/png"
+            content_type="image/png",
+            resize=False  # Don't resize step images - keep them landscape
         )
 
         if not oci_url:

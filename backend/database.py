@@ -246,6 +246,22 @@ def execute_query_dict(query: str, params: Optional[Tuple] = None) -> List[Dict]
                     pass
 
             where_conditions = []
+            order_by_column = None
+            order_desc = False
+
+            # Parse ORDER BY clause
+            if "ORDER BY" in query.upper():
+                order_part = query.upper().split("ORDER BY")[1].strip()
+                # Remove LIMIT/OFFSET from order part
+                if "LIMIT" in order_part:
+                    order_part = order_part.split("LIMIT")[0].strip()
+
+                order_parts = order_part.split()
+                if len(order_parts) > 0:
+                    order_by_column = order_parts[0].strip().lower()
+                    if len(order_parts) > 1 and order_parts[1].upper() == "DESC":
+                        order_desc = True
+
             if "WHERE" in query.upper():
                 where_clause = query.split("WHERE")[1].strip()
                 if "LIMIT" in where_clause.upper():
@@ -279,6 +295,10 @@ def execute_query_dict(query: str, params: Optional[Tuple] = None) -> List[Dict]
 
             for col_name, val in where_conditions:
                 supabase_query = supabase_query.eq(col_name, val)
+
+            # Apply ORDER BY if specified
+            if order_by_column:
+                supabase_query = supabase_query.order(order_by_column, desc=order_desc)
 
             if limit:
                 supabase_query = supabase_query.limit(limit)

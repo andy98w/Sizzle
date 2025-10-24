@@ -707,7 +707,7 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
                     {step.image_url && (
                       <motion.div
                         className="absolute top-16 left-8 right-8 flex items-start justify-center pointer-events-none"
-                        style={{ zIndex: 9000, maxHeight: '40vh' }}
+                        style={{ zIndex: 9000 }}
                         animate={{
                           x: isCurrentlyAnimating
                             ? animationDirection === 1
@@ -731,8 +731,14 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
                         <img
                           src={step.image_url}
                           alt={`Step ${stepIndex + 1}`}
-                          className="max-w-full object-contain rounded-lg shadow-2xl"
-                          style={{ maxHeight: '40vh', maxWidth: '85%' }}
+                          className="rounded-lg shadow-2xl"
+                          style={{
+                            maxHeight: '40vh',
+                            maxWidth: '85%',
+                            width: 'auto',
+                            height: 'auto',
+                            display: 'block'
+                          }}
                         />
                       </motion.div>
                     )}

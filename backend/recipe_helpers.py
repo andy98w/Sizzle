@@ -157,8 +157,13 @@ def _insert_recipe_ingredients(recipe_id: int, ingredients: List[Dict[str, Any]]
     """Insert recipe ingredients."""
     try:
         for ingredient in ingredients:
+            ingredient_name = ingredient.get('name')
+            if not ingredient_name:
+                logger.warning("Skipping ingredient with no name")
+                continue
+
             # Get or create the ingredient
-            ingredient_id = _get_or_create_ingredient(ingredient.get('name'))
+            ingredient_id = _get_or_create_ingredient(ingredient_name)
 
             if ingredient_id:
                 # Extract quantity and unit from the ingredient data
@@ -166,17 +171,18 @@ def _insert_recipe_ingredients(recipe_id: int, ingredients: List[Dict[str, Any]]
                 quantity_str = ingredient.get('quantity', '')
                 unit = ingredient.get('unit', '')
 
-                # Link to recipe
+                # Link to recipe - include name since it's required
                 link_data = {
                     "recipe_id": recipe_id,
                     "ingredient_id": ingredient_id,
+                    "name": ingredient_name,  # Add name field
                     "quantity": quantity_str,
                     "unit": unit
                 }
 
                 # Insert ingredient link
                 supabase_client.table("recipe_ingredients").insert(link_data).execute()
-                logger.debug(f"Inserted ingredient: {ingredient.get('name')}")
+                logger.debug(f"Inserted ingredient: {ingredient_name}")
 
     except Exception as e:
         log_exception(e, "Error inserting recipe ingredients")
@@ -186,19 +192,25 @@ def _insert_recipe_equipment(recipe_id: int, equipment_list: List[Dict[str, Any]
     """Insert recipe equipment."""
     try:
         for equipment in equipment_list:
+            equipment_name = equipment.get('name')
+            if not equipment_name:
+                logger.warning("Skipping equipment with no name")
+                continue
+
             # Get or create the equipment
-            equipment_id = _get_or_create_equipment(equipment.get('name'))
+            equipment_id = _get_or_create_equipment(equipment_name)
 
             if equipment_id:
-                # Link to recipe
+                # Link to recipe - include name since it's required
                 link_data = {
                     "recipe_id": recipe_id,
-                    "equipment_id": equipment_id
+                    "equipment_id": equipment_id,
+                    "name": equipment_name  # Add name field
                 }
 
                 # Insert equipment link
                 supabase_client.table("recipe_equipment").insert(link_data).execute()
-                logger.debug(f"Inserted equipment: {equipment.get('name')}")
+                logger.debug(f"Inserted equipment: {equipment_name}")
 
     except Exception as e:
         log_exception(e, "Error inserting recipe equipment")
@@ -225,11 +237,13 @@ def _insert_recipe_steps(
                 logger.warning(f"Step {step_number} has no instruction, skipping")
                 continue
 
-            # Insert the step
+            # Insert the step (including output and dependencies if available)
             step_data = {
                 "recipe_id": recipe_id,
                 "step_number": step_number,
-                "instruction": instruction
+                "instruction": instruction,
+                "output": step.get('output'),  # Step output for better image generation
+                "dependencies": step.get('dependencies', [])  # Step dependencies for graph-based workflows
             }
 
             result = supabase_client.table("recipe_steps").insert(step_data).execute()
@@ -267,13 +281,28 @@ def _insert_recipe_steps(
 def _insert_step_ingredients(step_id: int, ingredients: List[Dict[str, Any]]):
     """Link ingredients to a step."""
     try:
-        for ingredient in ingredients:
-            ingredient_id = _get_or_create_ingredient(ingredient.get('name'))
+        # First get the recipe_id from this step
+        step_result = supabase_client.table("recipe_steps").select("recipe_id").eq("id", step_id).execute()
+        if not step_result.data or len(step_result.data) == 0:
+            logger.error(f"Could not find step {step_id}")
+            return
 
-            if ingredient_id:
+        recipe_id = step_result.data[0]['recipe_id']
+
+        for ingredient in ingredients:
+            ingredient_name = ingredient.get('name')
+            if not ingredient_name:
+                continue
+
+            # Find the recipe_ingredients row for this recipe and ingredient name
+            recipe_ing_result = supabase_client.table("recipe_ingredients").select("id").eq("recipe_id", recipe_id).ilike("name", ingredient_name).execute()
+
+            if recipe_ing_result.data and len(recipe_ing_result.data) > 0:
+                recipe_ingredient_id = recipe_ing_result.data[0]['id']
+
                 link_data = {
                     "step_id": step_id,
-                    "ingredient_id": ingredient_id
+                    "ingredient_id": recipe_ingredient_id  # Use recipe_ingredients.id, not ingredients.id
                 }
                 supabase_client.table("step_ingredients").insert(link_data).execute()
 
@@ -284,13 +313,28 @@ def _insert_step_ingredients(step_id: int, ingredients: List[Dict[str, Any]]):
 def _insert_step_equipment(step_id: int, equipment_list: List[Dict[str, Any]]):
     """Link equipment to a step."""
     try:
-        for equipment in equipment_list:
-            equipment_id = _get_or_create_equipment(equipment.get('name'))
+        # First get the recipe_id from this step
+        step_result = supabase_client.table("recipe_steps").select("recipe_id").eq("id", step_id).execute()
+        if not step_result.data or len(step_result.data) == 0:
+            logger.error(f"Could not find step {step_id}")
+            return
 
-            if equipment_id:
+        recipe_id = step_result.data[0]['recipe_id']
+
+        for equipment in equipment_list:
+            equipment_name = equipment.get('name')
+            if not equipment_name:
+                continue
+
+            # Find the recipe_equipment row for this recipe and equipment name
+            recipe_eq_result = supabase_client.table("recipe_equipment").select("id").eq("recipe_id", recipe_id).ilike("name", equipment_name).execute()
+
+            if recipe_eq_result.data and len(recipe_eq_result.data) > 0:
+                recipe_equipment_id = recipe_eq_result.data[0]['id']
+
                 link_data = {
                     "step_id": step_id,
-                    "equipment_id": equipment_id
+                    "equipment_id": recipe_equipment_id  # Use recipe_equipment.id, not equipment.id
                 }
                 supabase_client.table("step_equipment").insert(link_data).execute()
 

@@ -26,6 +26,11 @@ OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
 OPENAI_MODEL = os.environ.get('OPENAI_MODEL', 'gpt-4o')
 OPENAI_TIMEOUT = int(os.environ.get('OPENAI_TIMEOUT', '120'))
 
+# Replicate Configuration (for Stable Diffusion)
+REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN', '')
+# Use SDXL for best quality and style consistency
+STABLE_DIFFUSION_MODEL = os.environ.get('STABLE_DIFFUSION_MODEL', 'stability-ai/sdxl:39ed52f2a78e934b3ba6e2a89f5b1c712de7dfea535525255b1aa35c5565e08b')
+
 # OCI Storage Configuration
 OCI_BUCKET_NAME = os.environ.get('OCI_BUCKET_NAME', 'sizzle-media')
 OCI_NAMESPACE = os.environ.get('OCI_NAMESPACE', '')

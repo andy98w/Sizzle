@@ -62,7 +62,13 @@ def enrich_items_with_images(items: List[Dict], item_type: str) -> None:
     for item in items:
         if item.get('name'):
             try:
+                # Try exact match first
                 result = supabase_client.table("generated_images").select("url, prompt").eq("type", item_type).ilike("name", item['name']).limit(1).execute()
+
+                # If no exact match, try partial match (e.g., "Spatula" matches "Spatula (Rubber/Silicone)")
+                if not result.data or len(result.data) == 0:
+                    result = supabase_client.table("generated_images").select("url, prompt").eq("type", item_type).ilike("name", f"%{item['name']}%").limit(1).execute()
+
                 if result.data and len(result.data) > 0:
                     item['url'] = format_oci_url(result.data[0].get('url', ''))
                     item['prompt'] = result.data[0].get('prompt')
@@ -70,58 +76,55 @@ def enrich_items_with_images(items: List[Dict], item_type: str) -> None:
                 logger.warning(f"Could not fetch image for {item_type} '{item['name']}': {str(e)}")
 
 def enrich_recipe_with_full_data(recipe: Dict) -> Dict:
-    """Fetch and add all related data to a recipe (optimized with fewer queries)."""
+    """Fetch and add all related data to a recipe."""
     recipe_id = recipe['id']
 
+    # Get recipe ingredients and equipment
     ingredients = execute_query_dict("SELECT * FROM recipe_ingredients WHERE recipe_id = %s", (recipe_id,))
     equipment = execute_query_dict("SELECT * FROM recipe_equipment WHERE recipe_id = %s", (recipe_id,))
 
     enrich_items_with_images(ingredients, "ingredient")
     enrich_items_with_images(equipment, "equipment")
 
-    steps = execute_query_dict("SELECT * FROM recipe_steps WHERE recipe_id = %s ORDER BY id", (recipe_id,))
+    # Get recipe steps
+    steps = execute_query_dict("SELECT * FROM recipe_steps WHERE recipe_id = %s ORDER BY step_number", (recipe_id,))
 
+    # Create ingredient and equipment lookup maps
+    ingredient_map = {ing['id']: ing for ing in ingredients}
+    equipment_map = {eq['id']: eq for eq in equipment}
+
+    # For each step, get its ingredients and equipment using direct Supabase queries
     if steps:
-        step_ids = tuple(step['id'] for step in steps)
-
-        step_ingredients_query = """
-            SELECT si.step_id, ri.*
-            FROM step_ingredients si
-            JOIN recipe_ingredients ri ON si.ingredient_id = ri.id
-            WHERE si.step_id = ANY(%s)
-        """
-        all_step_ingredients = execute_query_dict(step_ingredients_query, (list(step_ids),))
-
-        step_equipment_query = """
-            SELECT se.step_id, re.*
-            FROM step_equipment se
-            JOIN recipe_equipment re ON se.equipment_id = re.id
-            WHERE se.step_id = ANY(%s)
-        """
-        all_step_equipment = execute_query_dict(step_equipment_query, (list(step_ids),))
-
-        step_ingredients_map = {}
-        for item in all_step_ingredients:
-            step_id = item.pop('step_id')
-            if step_id not in step_ingredients_map:
-                step_ingredients_map[step_id] = []
-            step_ingredients_map[step_id].append(item)
-
-        step_equipment_map = {}
-        for item in all_step_equipment:
-            step_id = item.pop('step_id')
-            if step_id not in step_equipment_map:
-                step_equipment_map[step_id] = []
-            step_equipment_map[step_id].append(item)
-
         for step in steps:
             step_id = step['id']
-            step['ingredients'] = step_ingredients_map.get(step_id, [])
-            step['equipment'] = step_equipment_map.get(step_id, [])
 
+            # Query step_ingredients to get ingredient IDs for this step
+            try:
+                step_ing_result = supabase_client.table("step_ingredients").select("ingredient_id").eq("step_id", step_id).execute()
+                step_ingredient_ids = [item['ingredient_id'] for item in (step_ing_result.data or [])]
+
+                # Get the full ingredient data from our ingredient_map
+                step['ingredients'] = [ingredient_map[ing_id].copy() for ing_id in step_ingredient_ids if ing_id in ingredient_map]
+            except Exception as e:
+                logger.warning(f"Could not fetch ingredients for step {step_id}: {str(e)}")
+                step['ingredients'] = []
+
+            # Query step_equipment to get equipment IDs for this step
+            try:
+                step_eq_result = supabase_client.table("step_equipment").select("equipment_id").eq("step_id", step_id).execute()
+                step_equipment_ids = [item['equipment_id'] for item in (step_eq_result.data or [])]
+
+                # Get the full equipment data from our equipment_map
+                step['equipment'] = [equipment_map[eq_id].copy() for eq_id in step_equipment_ids if eq_id in equipment_map]
+            except Exception as e:
+                logger.warning(f"Could not fetch equipment for step {step_id}: {str(e)}")
+                step['equipment'] = []
+
+            # Enrich with images
             enrich_items_with_images(step['ingredients'], "ingredient")
             enrich_items_with_images(step['equipment'], "equipment")
 
+            # Format URLs
             format_item_urls(step['ingredients'], 'url')
             format_item_urls(step['equipment'], 'url')
             format_item_urls([step], 'action_image', 'step_image', 'image_url')
@@ -400,13 +403,13 @@ async def get_recipe(recipe_id: int):
 
 # Generate step images for a recipe (with parallel generation)
 @app.post("/recipes/{recipe_id}/generate-step-images")
-async def generate_recipe_step_images(recipe_id: int, parallel: bool = True, force: bool = False):
+async def generate_recipe_step_images(recipe_id: int, parallel: bool = True, force: bool = True):
     """
     Generate images for all steps in a recipe using DALL-E.
 
     Args:
         parallel: If True, generate all images in parallel (faster but higher load)
-        force: If True, regenerate images even if they already exist
+        force: If True, regenerate images even if they already exist (default: True for development)
     """
     try:
         from background_tasks import generate_all_step_images_parallel, wait_for_all_images

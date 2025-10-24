@@ -349,12 +349,12 @@ export const IngredientVisual: React.FC<{
     // Default emoji if no match
     return '🍴';
   };
-  
+
   // Render image or fallback
   const renderImage = () => {
     if (isLoading) {
       return (
-        <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center mr-3 animate-pulse">
+        <div className="w-10 h-10 bg-gray-200 flex items-center justify-center mr-3 animate-pulse">
         </div>
       );
     }
@@ -366,18 +366,26 @@ export const IngredientVisual: React.FC<{
       placeholder;
 
     return (
-      <img
-        src={fullUrl}
-        alt={ingredient}
-        className="w-10 h-10 rounded-full object-cover mr-3"
-        onError={(e) => {
-          const target = e.target as HTMLImageElement;
-          // Always fall back to placeholder, never hide
-          if (target.src !== placeholder) {
-            target.src = placeholder;
-          }
-        }}
-      />
+      <div className="w-10 h-10 mr-3 flex items-center justify-center relative">
+        <img
+          src={fullUrl}
+          alt={ingredient}
+          className="max-w-full max-h-full object-contain"
+          style={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)'
+          }}
+          onError={(e) => {
+            const target = e.target as HTMLImageElement;
+            // Always fall back to placeholder, never hide
+            if (target.src !== placeholder) {
+              target.src = placeholder;
+            }
+          }}
+        />
+      </div>
     );
   };
   
@@ -560,12 +568,12 @@ export const EquipmentVisual: React.FC<{
     // Default emoji if no match
     return '🍳';
   };
-  
+
   // Render image or fallback
   const renderImage = () => {
     if (isLoading) {
       return (
-        <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center mr-3 animate-pulse">
+        <div className="w-10 h-10 bg-gray-200 flex items-center justify-center mr-3 animate-pulse">
         </div>
       );
     }
@@ -577,18 +585,26 @@ export const EquipmentVisual: React.FC<{
       placeholder;
 
     return (
-      <img
-        src={fullUrl}
-        alt={equipment}
-        className="w-10 h-10 rounded-full object-cover mr-3"
-        onError={(e) => {
-          const target = e.target as HTMLImageElement;
-          // Always fall back to placeholder, never hide
-          if (target.src !== placeholder) {
-            target.src = placeholder;
-          }
-        }}
-      />
+      <div className="w-10 h-10 mr-3 flex items-center justify-center relative">
+        <img
+          src={fullUrl}
+          alt={equipment}
+          className="max-w-full max-h-full object-contain"
+          style={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)'
+          }}
+          onError={(e) => {
+            const target = e.target as HTMLImageElement;
+            // Always fall back to placeholder, never hide
+            if (target.src !== placeholder) {
+              target.src = placeholder;
+            }
+          }}
+        />
+      </div>
     );
   };
   

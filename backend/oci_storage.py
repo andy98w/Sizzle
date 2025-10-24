@@ -11,6 +11,8 @@ mimetypes.init()
 
 # Standard image size for all uploads
 STANDARD_IMAGE_SIZE = (512, 512)
+# Recipe step images use landscape format to match DALL-E output
+STEP_IMAGE_SIZE = (716, 512)  # Maintains ~1.4:1 aspect ratio (close to 1792:1024)
 
 OCI_AVAILABLE = False
 
@@ -154,7 +156,7 @@ def crop_transparent_padding(img: Image.Image, alpha_threshold: int = 20) -> Ima
 def resize_image(image_content: bytes, target_size: Tuple[int, int] = STANDARD_IMAGE_SIZE) -> bytes:
     """
     Resize an image to a standard size while maintaining aspect ratio and transparency.
-    Intelligently crops transparent padding before resizing.
+    Ensures all objects are similar visual sizes for consistent physics interactions.
 
     Args:
         image_content: The image content as bytes
@@ -173,8 +175,19 @@ def resize_image(image_content: bytes, target_size: Tuple[int, int] = STANDARD_I
         # Crop transparent padding to get tight bounds around actual content
         img = crop_transparent_padding(img)
 
-        # Resize with high-quality resampling, maintaining aspect ratio
-        img.thumbnail(target_size, Image.Resampling.LANCZOS)
+        # Calculate scale to make object fill 70% of the canvas (consistent visual size)
+        # This ensures all objects are similar sizes regardless of original dimensions
+        max_dimension = max(img.size[0], img.size[1])
+        target_max_dimension = int(min(target_size) * 0.7)  # 70% of canvas
+
+        if max_dimension > 0:
+            scale = target_max_dimension / max_dimension
+            new_width = int(img.size[0] * scale)
+            new_height = int(img.size[1] * scale)
+
+            # Resize with high-quality resampling
+            img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            logger.info(f"Resized object to {new_width}x{new_height} (70% of canvas)")
 
         # Create a new transparent image with the target size
         new_img = Image.new('RGBA', target_size, (0, 0, 0, 0))
