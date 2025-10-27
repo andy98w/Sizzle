@@ -1,5 +1,25 @@
 // Global application constants
 
+// OCI Storage Configuration
+export const OCI_PAR_BASE_URL = process.env.NEXT_PUBLIC_OCI_PAR_URL || '';
+
+// Helper function to construct OCI URLs
+export function getOCIImageUrl(filename: string): string {
+  if (!OCI_PAR_BASE_URL) {
+    console.warn('OCI_PAR_BASE_URL is not configured');
+    return '';
+  }
+  return `${OCI_PAR_BASE_URL.replace(/\/$/, '')}/${filename.replace(/^\//, '')}`;
+}
+
+// Placeholder image URLs
+export const PLACEHOLDER_INGREDIENT_URL = getOCIImageUrl('placeholder_ingredient.png');
+export const PLACEHOLDER_EQUIPMENT_URL = getOCIImageUrl('placeholder_equipment.png');
+
+// API Configuration
+export const DEFAULT_SEARCH_LIMIT = 5;
+export const DEFAULT_ITEMS_PER_PAGE = 10;
+
 // Kitchen layout configuration
 export const KITCHEN_CONSTANTS = {
   // The counter height is 25vh from the bottom

@@ -4,6 +4,7 @@ import axios from 'axios';
 import { API_URL } from '@/config';
 import { getImageUrl, handleImageError } from '@/utils';
 import { ImageWithFallback } from './shared';
+import { PLACEHOLDER_INGREDIENT_URL, PLACEHOLDER_EQUIPMENT_URL, DEFAULT_SEARCH_LIMIT } from '@/utils/constants';
 
 // Cache for ingredient image URLs
 const ingredientCache: Record<string, string | null> = {};
@@ -17,7 +18,7 @@ export const getIngredientImageUrl = async (ingredientName: string): Promise<str
   
   try {
     // Try to find the ingredient using the search endpoint
-    const response = await axios.get(`${API_URL}/ingredients?search=${encodeURIComponent(ingredientName)}&limit=5`);
+    const response = await axios.get(`${API_URL}/ingredients?search=${encodeURIComponent(ingredientName)}&limit=${DEFAULT_SEARCH_LIMIT}`);
     
     // Extract data from the nested structure
     const responseData = response.data;
@@ -80,7 +81,7 @@ export const getIngredientImageUrl = async (ingredientName: string): Promise<str
     }
     
     // Return placeholder if no match found
-    const placeholder = "https://objectstorage.ca-toronto-1.oraclecloud.com/p/LHruGKILbQNvy2_V89soZbDGmCXZ-RecXxEAAzoKdZx1y9Tcuz0J-gEmWtIcNZhJ/n/yzep9haqilyk/b/SizzleGeneratedImages/o/placeholder_ingredient.png";
+    const placeholder = PLACEHOLDER_INGREDIENT_URL;
     ingredientCache[ingredientName] = placeholder;
     return placeholder;
 
@@ -88,7 +89,7 @@ export const getIngredientImageUrl = async (ingredientName: string): Promise<str
     console.error(`Error fetching ingredient image for ${ingredientName}:`, error);
 
     // Return placeholder on error
-    const placeholder = "https://objectstorage.ca-toronto-1.oraclecloud.com/p/LHruGKILbQNvy2_V89soZbDGmCXZ-RecXxEAAzoKdZx1y9Tcuz0J-gEmWtIcNZhJ/n/yzep9haqilyk/b/SizzleGeneratedImages/o/placeholder_ingredient.png";
+    const placeholder = PLACEHOLDER_INGREDIENT_URL;
     ingredientCache[ingredientName] = placeholder;
     return placeholder;
   }
@@ -360,7 +361,7 @@ export const IngredientVisual: React.FC<{
     }
 
     // Always show an image - either the actual image or placeholder
-    const placeholder = "https://objectstorage.ca-toronto-1.oraclecloud.com/p/LHruGKILbQNvy2_V89soZbDGmCXZ-RecXxEAAzoKdZx1y9Tcuz0J-gEmWtIcNZhJ/n/yzep9haqilyk/b/SizzleGeneratedImages/o/placeholder_ingredient.png";
+    const placeholder = PLACEHOLDER_INGREDIENT_URL;
     const fullUrl = imageUrl ?
       (imageUrl.startsWith('http') ? imageUrl : `${API_URL}${imageUrl.startsWith('/') ? '' : '/'}${imageUrl}`) :
       placeholder;
@@ -417,7 +418,7 @@ export const getEquipmentImageUrl = async (equipmentName: string): Promise<strin
   
   try {
     // Try to find the equipment using the EQUIPMENT search endpoint
-    const response = await axios.get(`${API_URL}/equipment?search=${encodeURIComponent(equipmentName)}&limit=5`);
+    const response = await axios.get(`${API_URL}/equipment?search=${encodeURIComponent(equipmentName)}&limit=${DEFAULT_SEARCH_LIMIT}`);
 
     // Extract data from the nested structure
     const responseData = response.data;
@@ -480,7 +481,7 @@ export const getEquipmentImageUrl = async (equipmentName: string): Promise<strin
     }
     
     // Return placeholder if no match found
-    const placeholder = "https://objectstorage.ca-toronto-1.oraclecloud.com/p/LHruGKILbQNvy2_V89soZbDGmCXZ-RecXxEAAzoKdZx1y9Tcuz0J-gEmWtIcNZhJ/n/yzep9haqilyk/b/SizzleGeneratedImages/o/placeholder_equipment.png";
+    const placeholder = PLACEHOLDER_EQUIPMENT_URL;
     equipmentCache[equipmentName] = placeholder;
     return placeholder;
 
@@ -488,7 +489,7 @@ export const getEquipmentImageUrl = async (equipmentName: string): Promise<strin
     console.error(`Error fetching equipment image for ${equipmentName}:`, error);
 
     // Return placeholder on error
-    const placeholder = "https://objectstorage.ca-toronto-1.oraclecloud.com/p/LHruGKILbQNvy2_V89soZbDGmCXZ-RecXxEAAzoKdZx1y9Tcuz0J-gEmWtIcNZhJ/n/yzep9haqilyk/b/SizzleGeneratedImages/o/placeholder_equipment.png";
+    const placeholder = PLACEHOLDER_EQUIPMENT_URL;
     equipmentCache[equipmentName] = placeholder;
     return placeholder;
   }
@@ -579,7 +580,7 @@ export const EquipmentVisual: React.FC<{
     }
 
     // Always show an image - either the actual image or placeholder
-    const placeholder = "https://objectstorage.ca-toronto-1.oraclecloud.com/p/LHruGKILbQNvy2_V89soZbDGmCXZ-RecXxEAAzoKdZx1y9Tcuz0J-gEmWtIcNZhJ/n/yzep9haqilyk/b/SizzleGeneratedImages/o/placeholder_equipment.png";
+    const placeholder = PLACEHOLDER_EQUIPMENT_URL;
     const fullUrl = imageUrl ?
       (imageUrl.startsWith('http') ? imageUrl : `${API_URL}${imageUrl.startsWith('/') ? '' : '/'}${imageUrl}`) :
       placeholder;

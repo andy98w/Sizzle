@@ -16,7 +16,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 from langchain_openai import ChatOpenAI
 
 # Local imports
-from config import OPENAI_API_KEY, OPENAI_MODEL, OPENAI_TIMEOUT
+from config import OPENAI_API_KEY, OPENAI_MODEL, OPENAI_TIMEOUT, VALIDATE_FOOD_REQUESTS
 from utils import logger, log_exception, parse_json_safely
 
 class RecipeAssistant:
@@ -82,26 +82,38 @@ Use this exact structure:
   ]
 }}
 
+IMPORTANT: Only generate recipes for food and edible items. If the request is clearly not about food (e.g., furniture, electronics, non-edible objects), politely refuse with a helpful message.
+
 CRITICAL GUIDELINES:
 1. Ingredient Names: Use simple, common names (e.g., "Rice" not "Japanese short-grain rice", "Salt" not "Sea salt")
 2. Equipment Names: Use generic names (e.g., "Bowl" not "Large wooden bowl", "Pot" not "3-quart saucepan")
 3. Steps: Each step should be clear and actionable. Only include ingredients/equipment actually used in that specific step.
-4. Step Output: REQUIRED - Describe the EXACT VISUAL STATE and physical appearance of what the step produces. ALWAYS include the container/equipment where the food is located (bowl, pot, skillet, plate, etc.). Be EXTREMELY specific about the form and state of ingredients, especially transformations. This is critical for accurate image generation.
+4. Step Output: REQUIRED - Describe the EXACT VISUAL STATE and physical appearance of what the step produces. ALWAYS include the container/equipment where the food is located (bowl, pot, skillet, plate, etc.). Be EXTREMELY specific about the form, texture, and state of ingredients, especially transformations. For LIQUIDS, emphasize smooth, uniform, pourable texture. For SOLIDS, specify texture and size. This is critical for accurate image generation.
+
+   AVOID AMBIGUOUS TRANSITION LANGUAGE:
+   - NEVER use: "starting to form", "beginning to", "just beginning", "partially"
+   - These create ambiguous states that confuse image generation
+   - Use CONCRETE, DEFINITE states: either fully liquid OR fully solid, not both
+   - Each step output should show ONE clear state, not a mid-transition
 
    KEY TRANSFORMATIONS TO DESCRIBE:
-   - EGGS: "cracked raw eggs with visible yolks and whites in bowl" → "pale yellow whisked egg liquid in bowl" → "fluffy yellow scrambled egg curds in skillet"
+   - EGGS: "cracked raw eggs with visible yolks and whites in bowl" → "smooth pale yellow liquid egg mixture in bowl" → "soft fluffy yellow scrambled egg curds with moist creamy texture in skillet"
    - BUTTER: "solid butter cube" → "melted golden liquid butter pooled in skillet"
    - FLOUR: "white flour powder in bowl" → "shaggy dough mixture in bowl" → "smooth elastic dough ball"
    - VEGETABLES: "whole tomato" → "diced tomato cubes" → "soft cooked tomato pieces"
+   - LIQUIDS: Always emphasize "liquid", "smooth", "uniform", "poured" to avoid solid interpretation
+   - COOKED EGGS: Always include texture words "soft", "moist", "creamy" to avoid hard boiled appearance
 
-   Examples:
-   - "cracked raw eggs with visible yellow yolks and clear whites in bowl" (not "raw eggs in bowl")
-   - "pale yellow whisked egg liquid in bowl" (not "whisked eggs" or "egg mixture")
-   - "melted golden liquid butter pooled in hot skillet" (not just "butter melted")
-   - "smooth elastic dough ball on floured counter" (not just "dough formed")
-   - "pasta boiling in bubbling water in pot" (good - describes the action)
-   - "pale yellow egg liquid poured into buttered skillet" (not "egg mixture added")
-   - "fluffy yellow scrambled egg curds in skillet" (not "eggs cooking")
+   Examples (GOOD vs BAD):
+   - ✓ "smooth pale yellow liquid egg mixture in bowl" (clear: liquid state)
+   - ✗ "pale yellow egg mixture starting to thicken" (ambiguous transition)
+   - ✓ "runny pale yellow egg liquid with small soft yellow egg curds in skillet" (clear: mostly liquid with some curds)
+   - ✗ "eggs beginning to set" (ambiguous: what does this look like?)
+   - ✓ "soft fluffy yellow scrambled egg curds with moist creamy texture in skillet" (clear: cooked but soft and moist)
+   - ✗ "fluffy yellow scrambled egg curds in skillet" (missing texture - looks hard boiled)
+   - ✗ "eggs partially cooked" (ambiguous transition)
+   - ✓ "melted golden liquid butter pooled in hot skillet" (clear: liquid state)
+   - ✗ "butter starting to melt" (ambiguous: solid or liquid?)
 
    CRITICAL: Describe the FORM (liquid, solid, powder, chunks, curds, etc.) and COLOR when relevant. If ingredients are in a container from a previous step, ALWAYS mention that container!
    Always specify: exact form/state, color when relevant, texture, AND the container/location.
@@ -113,12 +125,65 @@ CRITICAL GUIDELINES:
 6. Quantities: Always include units (cups, tbsp, tsp, oz, g, etc.)
 7. Servings: Must be an integer number
 8. Times: Format as "X mins" or "X hours" (e.g., "15 mins", "1 hour", "2 hours 30 mins")
+9. Final Step: REQUIRED - Always include a final concluding step that shows the completed dish ready to serve. This step should:
+   - Come after all cooking/assembly steps are complete
+   - Have an instruction like "Serve immediately" or "Transfer to serving plate and enjoy"
+   - Have dependencies on the final cooking/assembly step(s)
+   - NOT have an output field (this is the final product, nothing comes after)
+   - Use minimal or no equipment (maybe just "Plate" or "Serving dish" if transferring)
+   - Use no ingredients (this is presentation only)
 
 OUTPUT ONLY THE JSON OBJECT."""),
             MessagesPlaceholder(variable_name="chat_history"),
             ("human", "{recipe_query}")
         ])
-    
+
+    def validate_is_food(self, query: str) -> tuple[bool, str]:
+        """
+        Validate if a query is about food or edible items.
+
+        Args:
+            query: User query to validate
+
+        Returns:
+            Tuple of (is_valid, error_message). error_message is None if valid.
+        """
+        if not self.api_key:
+            # If no API key, skip validation
+            return True, None
+
+        try:
+            validation_prompt = f"""Is the following request about food, cooking, or edible items that can be prepared in a kitchen?
+
+Request: "{query}"
+
+Answer with ONLY 'YES' or 'NO'.
+
+Consider 'YES' for:
+- Any food dishes, meals, snacks, drinks, desserts
+- Cooking techniques or preparations
+- Edible items (even unusual ones like edible flowers, insects if culturally appropriate)
+- Beverages and drinks
+
+Consider 'NO' for:
+- Non-food items (furniture, electronics, tools, etc.)
+- Non-edible objects
+- Services or activities unrelated to cooking
+"""
+
+            response = self.llm.invoke(validation_prompt)
+            answer = response.content.strip().upper()
+
+            if 'NO' in answer or 'NOT' in answer:
+                return False, "I can only generate recipes for food and edible items. Please try a food-related request like 'scrambled eggs' or 'chocolate chip cookies'."
+
+            return True, None
+
+        except Exception as e:
+            # If validation fails, log and allow request (fail open)
+            logger.warning(f"Food validation check failed: {str(e)}")
+            return True, None
+
     def generate_recipe(self, query: str) -> Dict[str, Any]:
         """
         Generate a structured recipe from a user query.
@@ -127,11 +192,18 @@ OUTPUT ONLY THE JSON OBJECT."""),
             query: User query for a recipe
 
         Returns:
-            Structured recipe data as a dictionary
+            Structured recipe data as a dictionary, or error dict if validation fails
         """
         if not self.api_key:
             logger.error("Cannot generate recipe: OpenAI API key is not set")
             return None
+
+        # Validate that the query is about food (if enabled in config)
+        if VALIDATE_FOOD_REQUESTS:
+            is_valid, error_message = self.validate_is_food(query)
+            if not is_valid:
+                logger.info(f"Rejected non-food request: {query}")
+                return {"error": "not_food", "message": error_message}
 
         try:
             # Generate the recipe directly as JSON in a single call

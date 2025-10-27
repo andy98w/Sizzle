@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Matter from 'matter-js';
-import { PHYSICS_CONSTANTS, getCounterFloorPosition } from '../utils/constants';
+import { PHYSICS_CONSTANTS, getCounterFloorPosition, PLACEHOLDER_INGREDIENT_URL, PLACEHOLDER_EQUIPMENT_URL } from '../utils/constants';
 import { getIngredientImageUrl, getEquipmentImageUrl } from './AnimationLibrary';
 import { API_URL } from '../config';
 
@@ -264,7 +264,17 @@ const PhysicsCounterMatterJS = React.forwardRef<{
       }
     };
 
-    window.addEventListener('resize', updateFloorPosition);
+    // Debounced resize handler to prevent layout thrashing
+    let resizeTimeout: NodeJS.Timeout;
+    const handleResize = () => {
+      clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(() => {
+        // Use requestAnimationFrame to ensure DOM has settled
+        requestAnimationFrame(updateFloorPosition);
+      }, 100);
+    };
+
+    window.addEventListener('resize', handleResize);
 
     const observer = new MutationObserver(() => {
       if (document.getElementById('kitchen-counter-texture')) {
@@ -279,7 +289,8 @@ const PhysicsCounterMatterJS = React.forwardRef<{
     }
 
     return () => {
-      window.removeEventListener('resize', updateFloorPosition);
+      clearTimeout(resizeTimeout);
+      window.removeEventListener('resize', handleResize);
       observer.disconnect();
     };
   }, []);
@@ -370,10 +381,30 @@ const PhysicsCounterMatterJS = React.forwardRef<{
     mouseConstraintRef.current = mouseConstraint;
     Matter.Composite.add(engine.world, mouseConstraint);
 
+    // Prevent dragging below the counter during drag
+    Matter.Events.on(mouseConstraint, 'mousemove', (event: any) => {
+      const body = mouseConstraint.body;
+      if (body && body.position.y > floorY - 60) {
+        // Constrain the mouse position to prevent dragging below floor
+        Matter.Body.setPosition(body, {
+          x: body.position.x,
+          y: floorY - 60
+        });
+      }
+    });
+
     // Limit throwing velocity - clamp max speed when releasing items
     Matter.Events.on(mouseConstraint, 'enddrag', (event: any) => {
       const body = event.body;
       if (!body) return;
+
+      // Ensure item doesn't end up below floor on release
+      if (body.position.y > floorY - 60) {
+        Matter.Body.setPosition(body, {
+          x: body.position.x,
+          y: floorY - 60
+        });
+      }
 
       const maxVelocity = 8; // Maximum throw speed (lower = slower throws)
 
@@ -495,7 +526,7 @@ const PhysicsCounterMatterJS = React.forwardRef<{
         }
 
         if (!imageUrl) {
-          imageUrl = 'https://objectstorage.ca-toronto-1.oraclecloud.com/p/LHruGKILbQNvy2_V89soZbDGmCXZ-RecXxEAAzoKdZx1y9Tcuz0J-gEmWtIcNZhJ/n/yzep9haqilyk/b/SizzleGeneratedImages/o/placeholder_ingredient.png';
+          imageUrl = PLACEHOLDER_INGREDIENT_URL;
         }
 
         // Determine shape based on ingredient name
@@ -567,7 +598,7 @@ const PhysicsCounterMatterJS = React.forwardRef<{
         }
 
         if (!imageUrl) {
-          imageUrl = 'https://objectstorage.ca-toronto-1.oraclecloud.com/p/LHruGKILbQNvy2_V89soZbDGmCXZ-RecXxEAAzoKdZx1y9Tcuz0J-gEmWtIcNZhJ/n/yzep9haqilyk/b/SizzleGeneratedImages/o/placeholder_equipment.png';
+          imageUrl = PLACEHOLDER_EQUIPMENT_URL;
         }
 
         if (imageUrl) totalImageCount++;
@@ -609,8 +640,8 @@ const PhysicsCounterMatterJS = React.forwardRef<{
       prevItems.map(item => {
         if (item.id === id) {
           const placeholderUrl = item.type === 'ingredient'
-            ? 'https://objectstorage.ca-toronto-1.oraclecloud.com/p/LHruGKILbQNvy2_V89soZbDGmCXZ-RecXxEAAzoKdZx1y9Tcuz0J-gEmWtIcNZhJ/n/yzep9haqilyk/b/SizzleGeneratedImages/o/placeholder_ingredient.png'
-            : 'https://objectstorage.ca-toronto-1.oraclecloud.com/p/LHruGKILbQNvy2_V89soZbDGmCXZ-RecXxEAAzoKdZx1y9Tcuz0J-gEmWtIcNZhJ/n/yzep9haqilyk/b/SizzleGeneratedImages/o/placeholder_equipment.png';
+            ? PLACEHOLDER_INGREDIENT_URL
+            : PLACEHOLDER_EQUIPMENT_URL;
           return { ...item, hasImageError: true, imageUrl: placeholderUrl };
         }
         return item;

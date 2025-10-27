@@ -21,37 +21,23 @@ def format_oci_url(url: str) -> str:
     if not url or 'objectstorage' not in url:
         return url
 
-    PAR_TOKEN = "VbMtmi4NetAmyHfVagGHtZGpkoLBtAptLSOPk0ssRwJn-22COZd1t8HZMrAV0ZSo"
+    # Import here to avoid circular dependency
+    from config import OCI_PAR_URL
+
+    # If URL already has PAR token or if OCI_PAR_URL is not configured, return as-is
+    if not OCI_PAR_URL or '/p/' in url:
+        return url
 
     try:
         parsed_url = urlparse(url)
-
-        if '/p/' in parsed_url.path and 'auto-par-token' not in url:
-            return url
-
         path = parsed_url.path
-        namespace = ""
-        bucket = ""
-        object_name = ""
 
-        n_index = path.find('/n/')
-        if n_index >= 0:
-            after_n = path[n_index + 3:]
-            next_slash = after_n.find('/')
-            namespace = after_n[:next_slash] if next_slash > 0 else after_n
-
-        b_index = path.find('/b/')
-        if b_index >= 0:
-            after_b = path[b_index + 3:]
-            next_slash = after_b.find('/')
-            bucket = after_b[:next_slash] if next_slash > 0 else after_b
-
+        # Extract object name from the path
         o_index = path.find('/o/')
         if o_index >= 0:
             object_name = path[o_index + 3:]
-
-        if namespace and bucket and object_name:
-            return f"{parsed_url.scheme}://{parsed_url.netloc}/p/{PAR_TOKEN}/n/{namespace}/b/{bucket}/o/{object_name}"
+            # Construct full URL using the PAR base URL from config
+            return f"{OCI_PAR_URL.rstrip('/')}/{object_name.lstrip('/')}"
     except Exception as e:
         logger.error(f"Error formatting OCI URL {url}: {str(e)}")
 

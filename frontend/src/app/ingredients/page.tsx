@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { API_URL } from '@/config';
+import { PLACEHOLDER_INGREDIENT_URL } from '@/utils/constants';
 
 // Custom hook for API fetching with better error handling
 function useFetch<T>(url: string, options?: RequestInit) {
@@ -82,7 +83,7 @@ const IngredientImage = ({ imageUrl, name }: { imageUrl: string, name: string })
   // Remove spaces from URL to prevent breaking Oracle Cloud PAR tokens
   const cleanedUrl = imageSrc.replace(/\s+/g, '');
 
-  const placeholderUrl = 'https://objectstorage.ca-toronto-1.oraclecloud.com/p/u4hPf1DL-E9utS-Mh6HXZFsLBXFSzqUlgsrBJsWpjxxkz1Udy_-g3wveTokFV5G6/n/yzep9haqilyk/b/SizzleGeneratedImages/o/placeholder_ingredient.png';
+  const placeholderUrl = PLACEHOLDER_INGREDIENT_URL;
 
   const handleImageError = (e: React.SyntheticEvent<HTMLImageElement, Event>) => {
     const target = e.target as HTMLImageElement;

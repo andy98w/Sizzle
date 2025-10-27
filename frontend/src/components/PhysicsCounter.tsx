@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { PHYSICS_CONSTANTS, getCounterFloorPosition } from '../utils/constants';
+import { PHYSICS_CONSTANTS, getCounterFloorPosition, PLACEHOLDER_INGREDIENT_URL, PLACEHOLDER_EQUIPMENT_URL } from '../utils/constants';
 import { getImageUrl } from '../utils';
 
 // Store random offsets per item to keep animations consistent
@@ -126,10 +126,20 @@ const PhysicsCounter = React.forwardRef<{
     };
     
     // Don't calculate initially - wait for the MutationObserver to detect the counter
-    
+
+    // Debounced resize handler to prevent layout thrashing
+    let resizeTimeout: NodeJS.Timeout;
+    const handleResize = () => {
+      clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(() => {
+        // Use requestAnimationFrame to ensure DOM has settled
+        requestAnimationFrame(updateFloorPosition);
+      }, 100);
+    };
+
     // Recalculate on window resize
-    window.addEventListener('resize', updateFloorPosition);
-    
+    window.addEventListener('resize', handleResize);
+
     // Add a MutationObserver to detect when the counter element appears
     const observer = new MutationObserver(() => {
       // Check for the counter element on any DOM change
@@ -138,17 +148,18 @@ const PhysicsCounter = React.forwardRef<{
         updateFloorPosition();
       }
     });
-    
+
     // Start observing the document body for changes
     observer.observe(document.body, { childList: true, subtree: true });
-    
+
     // Try immediately in case the counter already exists
     if (document.getElementById('kitchen-counter-texture')) {
       updateFloorPosition();
     }
-    
+
     return () => {
-      window.removeEventListener('resize', updateFloorPosition);
+      clearTimeout(resizeTimeout);
+      window.removeEventListener('resize', handleResize);
       observer.disconnect();
     };
   }, []);
@@ -172,8 +183,8 @@ const PhysicsCounter = React.forwardRef<{
         if (item.id === id) {
           // Set the appropriate placeholder based on type
           const placeholderUrl = item.type === 'ingredient'
-            ? 'https://objectstorage.ca-toronto-1.oraclecloud.com/p/u4hPf1DL-E9utS-Mh6HXZFsLBXFSzqUlgsrBJsWpjxxkz1Udy_-g3wveTokFV5G6/n/yzep9haqilyk/b/SizzleGeneratedImages/o/placeholder_ingredient.png'
-            : 'https://objectstorage.ca-toronto-1.oraclecloud.com/p/u4hPf1DL-E9utS-Mh6HXZFsLBXFSzqUlgsrBJsWpjxxkz1Udy_-g3wveTokFV5G6/n/yzep9haqilyk/b/SizzleGeneratedImages/o/placeholder_equipment.png';
+            ? PLACEHOLDER_INGREDIENT_URL
+            : PLACEHOLDER_EQUIPMENT_URL;
 
           return { ...item, hasImageError: true, imageUrl: placeholderUrl };
         }
@@ -355,7 +366,7 @@ const PhysicsCounter = React.forwardRef<{
 
       // Use the URL that comes directly with the ingredient from the recipe
       // Default to placeholder if no image found
-      const imageUrl = ingredient.url || ingredient.imageUrl || 'https://objectstorage.ca-toronto-1.oraclecloud.com/p/LHruGKILbQNvy2_V89soZbDGmCXZ-RecXxEAAzoKdZx1y9Tcuz0J-gEmWtIcNZhJ/n/yzep9haqilyk/b/SizzleGeneratedImages/o/placeholder_ingredient.png';
+      const imageUrl = ingredient.url || ingredient.imageUrl || PLACEHOLDER_INGREDIENT_URL;
 
       if (imageUrl) totalImageCount++;
 
@@ -392,7 +403,7 @@ const PhysicsCounter = React.forwardRef<{
 
       // Use the URL that comes directly with the equipment from the recipe
       // Default to placeholder if no image found
-      const imageUrl = equip.url || equip.imageUrl || 'https://objectstorage.ca-toronto-1.oraclecloud.com/p/LHruGKILbQNvy2_V89soZbDGmCXZ-RecXxEAAzoKdZx1y9Tcuz0J-gEmWtIcNZhJ/n/yzep9haqilyk/b/SizzleGeneratedImages/o/placeholder_equipment.png';
+      const imageUrl = equip.url || equip.imageUrl || PLACEHOLDER_EQUIPMENT_URL;
 
       if (imageUrl) totalImageCount++;
 

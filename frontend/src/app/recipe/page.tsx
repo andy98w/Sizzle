@@ -7,100 +7,35 @@ import RecipeTitle from '@/components/RecipeTitle';
 import { FaPlay, FaClock, FaUser } from 'react-icons/fa';
 import Link from 'next/link';
 
-// Sample recipe data - AI generated sushi rice recipe
-const sampleRecipe = {
-  id: 1,
-  title: 'Sushi Rice',
-  description: 'Perfectly seasoned and sticky rice for making sushi or serving alongside Japanese dishes.',
-  prepTime: '10 mins',
-  cookTime: '20 mins',
-  servings: 4,
-  ingredients: [
-    { name: 'Rice', quantity: '2 cups' },
-    { name: 'Water', quantity: '2 cups' },
-    { name: 'Rice vinegar', quantity: '1/4 cup' },
-    { name: 'Sugar', quantity: '2 tbsp' },
-    { name: 'Salt', quantity: '1 tsp' }
-  ],
-  equipment: [
-    { name: 'Pot' },
-    { name: 'Bowl' },
-    { name: 'Saucepan' },
-    { name: 'Spoon' }
-  ],
-  steps: [
-    {
-      id: 1,
-      instruction: 'Rinse the rice under cold water until the water runs clear.',
-      ingredients: [
-        { name: 'Rice', quantity: '2 cups' }
-      ],
-      equipment: [
-        { name: 'Large bowl' }
-      ]
-    },
-    {
-      id: 2,
-      instruction: 'Combine the rinsed rice and water in a pot and bring to a boil over medium heat.',
-      ingredients: [
-        { name: 'Rice', quantity: '2 cups' },
-        { name: 'Water', quantity: '2 cups' }
-      ],
-      equipment: [
-        { name: 'Pot' }
-      ]
-    },
-    {
-      id: 3,
-      instruction: 'Once boiling, reduce the heat to low, cover the pot, and simmer for 15 mins until the water is absorbed.',
-      ingredients: [],
-      equipment: [
-        { name: 'Pot' }
-      ]
-    },
-    {
-      id: 4,
-      instruction: 'Remove the pot from heat and let the rice rest, covered, for 10 mins.',
-      ingredients: [],
-      equipment: [
-        { name: 'Pot' }
-      ]
-    },
-    {
-      id: 5,
-      instruction: 'While the rice rests, heat rice vinegar, sugar, and salt in a small saucepan over low heat until the sugar is dissolved.',
-      ingredients: [
-        { name: 'Rice vinegar', quantity: '1/4 cup' },
-        { name: 'Sugar', quantity: '2 tbsp' },
-        { name: 'Salt', quantity: '1 tsp' }
-      ],
-      equipment: [
-        { name: 'Small saucepan' }
-      ]
-    },
-    {
-      id: 6,
-      instruction: 'Transfer the cooked rice to a large bowl and gently fold in the vinegar mixture with a wooden spoon.',
-      ingredients: [
-        { name: 'Rice' }
-      ],
-      equipment: [
-        { name: 'Large bowl' },
-        { name: 'Wooden spoon' }
-      ]
-    },
-    {
-      id: 7,
-      instruction: 'Allow the seasoned rice to cool to room temperature before using in sushi.',
-      ingredients: [],
-      equipment: []
-    }
-  ]
-};
+// Sample recipe ID - Scrambled Eggs (Recipe 19)
+const SAMPLE_RECIPE_ID = 19;
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 export default function RecipePage() {
-  const [recipe, setRecipe] = useState(sampleRecipe);
-  const [showSlideshow, setShowSlideshow] = useState(true); // Start with slideshow open
+  const [recipe, setRecipe] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [showSlideshow, setShowSlideshow] = useState(false); // Start with slideshow closed until recipe loads
+
+  // Fetch the sample recipe from the API
+  useEffect(() => {
+    const fetchRecipe = async () => {
+      try {
+        const response = await fetch(`${API_URL}/recipes/${SAMPLE_RECIPE_ID}`);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch recipe: ${response.status}`);
+        }
+        const data = await response.json();
+        setRecipe(data.data);
+        setLoading(false);
+        setShowSlideshow(true); // Auto-start slideshow once recipe is loaded
+      } catch (error) {
+        console.error('Error fetching recipe:', error);
+        setLoading(false);
+      }
+    };
+
+    fetchRecipe();
+  }, []);
 
   // Proper handler to close the slideshow
   const handleClose = () => {
@@ -122,6 +57,30 @@ export default function RecipePage() {
       };
     }
   }, [showSlideshow]);
+
+  if (loading) {
+    return (
+      <div className="fixed inset-0 top-[73px] overflow-hidden flex items-center justify-center">
+        <div className="text-center">
+          <div className="text-2xl font-semibold text-gray-700 mb-4">Loading recipe...</div>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-500 mx-auto"></div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!recipe) {
+    return (
+      <div className="fixed inset-0 top-[73px] overflow-hidden flex items-center justify-center">
+        <div className="text-center">
+          <div className="text-2xl font-semibold text-red-600 mb-4">Failed to load recipe</div>
+          <Link href="/" className="text-primary-600 hover:text-primary-800 underline">
+            Return to Home
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 top-[73px] overflow-hidden flex flex-col">

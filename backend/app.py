@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from config import API_CORS_ORIGINS, API_DEBUG, STATIC_DIR, TEMP_DIR, OPENAI_API_KEY, OCI_BUCKET_NAME
+from config import API_CORS_ORIGINS, API_DEBUG, STATIC_DIR, TEMP_DIR, OPENAI_API_KEY, OCI_BUCKET_NAME, IMAGE_GENERATION_TIMEOUT
 from utils import logger, format_api_response, format_error_response, format_oci_url, log_exception
 from database import get_database_status, execute_query_dict, execute_query_dict_single_row, supabase_client
 from recipe_assistant import RecipeAssistant
@@ -168,6 +168,11 @@ def list_items_with_search(item_type: str, limit: int, offset: int, search: Opti
 
     format_item_urls(items, 'url')
 
+    # Map 'url' to 'imageUrl' for frontend compatibility
+    for item in items:
+        if 'url' in item and 'imageUrl' not in item:
+            item['imageUrl'] = item['url']
+
     return {"items": items, "total": total_count, "limit": limit, "offset": offset}
 
 # Setup request logging middleware
@@ -304,16 +309,25 @@ async def generate_recipe(query: RecipeQuery, save_to_db: bool = True, auto_gene
         save_to_db: If True, save the generated recipe to database
         auto_generate_images: If True, automatically start generating step images in background
     """
-    try:
-        from recipe_helpers import save_recipe_to_db
+    from recipe_helpers import save_recipe_to_db
 
-        logger.info(f"Generating new recipe for: {query.query}")
+    logger.info(f"Generating new recipe for: {query.query}")
+
+    try:
         recipe_data = recipe_assistant.generate_recipe(query.query)
 
         if not recipe_data:
             raise HTTPException(
                 status_code=500,
                 detail="Could not generate a recipe for the given query"
+            )
+
+        # Check if validation failed (non-food request)
+        # Handle this outside the general exception handler to ensure proper status code
+        if isinstance(recipe_data, dict) and recipe_data.get('error') == 'not_food':
+            raise HTTPException(
+                status_code=400,
+                detail=recipe_data.get('message', 'Request must be for food or edible items')
             )
 
         # Save to database if requested (with auto image generation)
@@ -329,6 +343,9 @@ async def generate_recipe(query: RecipeQuery, save_to_db: bool = True, auto_gene
                         logger.info(f"Background image generation started for recipe {recipe_id}")
 
         return format_api_response(recipe_data)
+    except HTTPException as http_exc:
+        # Re-raise HTTP exceptions (like validation errors) without wrapping
+        raise http_exc
     except Exception as e:
         log_exception(e, "Error generating recipe")
         raise HTTPException(
@@ -345,33 +362,52 @@ async def list_recipes(
 ):
     """List recipes with optional search and pagination."""
     try:
-        # Build the query
-        query = "SELECT * FROM recipes"
-        params = []
-        
-        # Add search condition if provided
+        # Fetch recipes - we'll sort in Python since Supabase REST API doesn't support CASE statements
         if search:
-            query += " WHERE title ILIKE %s OR description ILIKE %s"
+            # Fetch all matching recipes (we'll apply pagination after sorting)
+            query = "SELECT * FROM recipes WHERE title ILIKE %s OR description ILIKE %s"
             search_term = f"%{search}%"
-            params.extend([search_term, search_term])
-        
-        # Add pagination
-        query += " ORDER BY id DESC LIMIT %s OFFSET %s"
-        params.extend([limit, offset])
-        
-        # Execute the query
-        recipes = execute_query_dict(query, tuple(params))
+            params = [search_term, search_term]
+            all_recipes = execute_query_dict(query, tuple(params))
+
+            # Sort by relevance in Python
+            # 1. Exact title match (highest priority)
+            # 2. Title starts with search term
+            # 3. Shorter titles (more specific matches)
+            # 4. Title contains term before description
+            # 5. ID as final tiebreaker
+            def relevance_score(recipe):
+                title_lower = recipe.get('title', '').lower()
+                search_lower = search.lower()
+                desc_lower = recipe.get('description', '').lower()
+
+                # Return tuple for sorting (lower is better)
+                exact_match = 0 if title_lower == search_lower else 1
+                starts_with = 0 if title_lower.startswith(search_lower) else 1
+                title_length = len(recipe.get('title', ''))
+                in_title = 0 if search_lower in title_lower else 1
+                recipe_id = -recipe.get('id', 0)  # Negative for DESC order
+
+                return (exact_match, starts_with, title_length, in_title, recipe_id)
+
+            # Sort and apply pagination
+            all_recipes.sort(key=relevance_score)
+            recipes = all_recipes[offset:offset + limit]
+        else:
+            # No search, just list by newest first
+            query = "SELECT * FROM recipes ORDER BY id DESC LIMIT %s OFFSET %s"
+            params = [limit, offset]
+            recipes = execute_query_dict(query, tuple(params))
         
         # Get total count for pagination
-        count_query = "SELECT COUNT(*) FROM recipes"
         if search:
-            count_query += " WHERE title ILIKE %s OR description ILIKE %s"
-            count_params = [f"%{search}%", f"%{search}%"]
+            # For search, total is the length of all matching recipes
+            total_count = len(all_recipes)
         else:
-            count_params = []
-            
-        count_result = execute_query_dict_single_row(count_query, tuple(count_params))
-        total_count = count_result.get('count', 0) if count_result else 0
+            # For no search, query the total count
+            count_query = "SELECT COUNT(*) FROM recipes"
+            count_result = execute_query_dict_single_row(count_query, ())
+            total_count = count_result.get('count', 0) if count_result else 0
         
         return format_api_response({
             "recipes": recipes,
@@ -438,8 +474,8 @@ async def generate_recipe_step_images(recipe_id: int, parallel: bool = True, for
                 check_existing=not force
             )
 
-            # Wait for all to complete (with 5 minute timeout)
-            results = wait_for_all_images(futures, timeout=300)
+            # Wait for all to complete (with configurable timeout)
+            results = wait_for_all_images(futures, timeout=IMAGE_GENERATION_TIMEOUT)
 
             success_count = sum(1 for r in results if r.get('success'))
 

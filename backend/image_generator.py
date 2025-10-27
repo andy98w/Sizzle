@@ -12,16 +12,15 @@ import replicate
 
 from config import (
     OPENAI_API_KEY, OCI_BUCKET_NAME, OCI_NAMESPACE, OCI_REGION,
-    REPLICATE_API_TOKEN, STABLE_DIFFUSION_MODEL
+    REPLICATE_API_TOKEN, STABLE_DIFFUSION_MODEL,
+    IMAGE_GENERATION_BACKEND, DALLE_MODEL, DALLE_SIZE, DALLE_QUALITY,
+    SD_WIDTH, SD_HEIGHT, SD_SEED, HTTP_REQUEST_TIMEOUT
 )
 from utils import logger, log_exception, format_oci_url
 from oci_storage import upload_file_to_oci
 
 # Initialize OpenAI client
 client = OpenAI(api_key=OPENAI_API_KEY)
-
-# Image generation backend: 'dalle' or 'stable_diffusion'
-IMAGE_GENERATION_BACKEND = os.environ.get('IMAGE_GENERATION_BACKEND', 'stable_diffusion')
 
 
 def generate_step_image_prompt(
@@ -58,13 +57,45 @@ def generate_step_image_prompt(
 
     items_list = ", ".join(items_to_show) if items_to_show else "cooking items"
 
-    # Use output if available, otherwise use instruction
+    # Use output if available, otherwise create appropriate subject
     # For steps with dependencies, the output already describes the merge
     if step_output:
         subject = step_output.lower()
+
+        # Transform container descriptions to prevent duplicate object hallucinations
+        # This adds "single" before containers to explicitly tell SD to show only ONE object
+        import re
+
+        # Try multiple patterns to catch different phrasings
+        container_keywords = r'(bowl|skillet|pot|pan|plate|dish|cutting board|tray)'
+
+        # Pattern 1: "[food] poured into [container]" or "[food] added to [container]"
+        poured_pattern = rf'(.+?)\s+(?:poured into|added to|placed in)\s+(?:\w+\s+)?({container_keywords})'
+        match = re.search(poured_pattern, subject)
+        if match:
+            food_desc = match.group(1)
+            container = match.group(2)
+            # Emphasize "single" to prevent duplicates
+            subject = f"single {container} completely filled with {food_desc}, centered, one {container} only"
+        else:
+            # Pattern 2: "[food] in [container]"
+            in_pattern = rf'(.+?)\s+in\s+({container_keywords})'
+            match = re.search(in_pattern, subject)
+            if match:
+                food_desc = match.group(1)
+                container = match.group(2)
+                # Rewrite with "single" to prevent duplicate objects
+                subject = f"single {container} filled with {food_desc}, centered, one {container} only"
     else:
+        # For final serving steps with no output, create a generic completed dish prompt
+        # Check if this looks like a serving/plating step
         instruction_lower = step_instruction.lower()
-        subject = f"{instruction_lower}, {items_list}"
+        if any(word in instruction_lower for word in ['serving', 'serve immediately', 'plate', 'plating', 'transfer to', 'enjoy immediately']):
+            # Final presentation step - show completed dish
+            subject = f"completed {recipe_title.lower()} plated and ready to serve"
+        else:
+            # Regular step without output - use instruction
+            subject = f"{instruction_lower}, {items_list}"
 
     # Ultra-minimal prompt - less room for hallucination
     # The output already captures dependencies (e.g., "egg mixture cooking in skillet")
@@ -93,10 +124,10 @@ def generate_image_with_dalle(prompt: str, size: str = "1792x1024", quality: str
         logger.info(f"Generating image with DALL-E: {prompt[:100]}...")
 
         response = client.images.generate(
-            model="dall-e-3",  # or "dall-e-2" for cheaper option
+            model=DALLE_MODEL,
             prompt=prompt,
-            size=size,
-            quality=quality,
+            size=size if size else DALLE_SIZE,
+            quality=quality if quality else DALLE_QUALITY,
             n=1,
         )
 
@@ -109,17 +140,25 @@ def generate_image_with_dalle(prompt: str, size: str = "1792x1024", quality: str
         return None
 
 
-def generate_image_with_stable_diffusion(prompt: str, width: int = 1792, height: int = 1024, seed: int = 42) -> Optional[str]:
+def generate_image_with_stable_diffusion(
+    prompt: str,
+    width: int = None,
+    height: int = None,
+    seed: int = None,
+    reference_image_url: str = None
+) -> Optional[str]:
     """
     Generate an image using Stable Diffusion via Replicate.
 
     Optimized for flat vector infographic-style recipe illustrations.
+    Can use a container equipment image as reference for consistency.
 
     Args:
         prompt: The text prompt for image generation
         width: Image width (default 1792 for landscape)
         height: Image height (default 1024 for landscape)
         seed: Random seed for reproducibility (ensures consistent style)
+        reference_image_url: Optional container equipment image URL to use as reference
 
     Returns:
         URL of the generated image, or None if generation failed
@@ -136,22 +175,33 @@ def generate_image_with_stable_diffusion(prompt: str, width: int = 1792, height:
 
         # Generic negative prompt - avoid hallucinations without blocking specific foods
         # Focus on rejecting ANY objects not explicitly mentioned in the prompt
-        negative_prompt = "extra objects, additional objects, unlisted items, objects not in prompt, items not mentioned, random objects, unrelated items, additional cookware, extra utensils, extra dishes, extra plates, extra tools, disconnected objects, floating objects, separate pieces, text, words, letters, numbers, labels, writing, font, typography, realistic, 3D, photo, photograph, side view, angled view, perspective, gradient, heavy texture, detailed shading, noisy background, watermark, blur, noise, unnecessary decorations, excessive patterns, complex details, harsh shadows, highlights, depth effect, multiple backgrounds, cluttered"
+        # Emphasize preventing duplicate objects, multiple containers, and side objects
+        negative_prompt = "duplicate objects, multiple containers, multiple bowls, multiple pans, multiple skillets, two bowls, two pans, two skillets, fused objects, overlapping containers, merging pans, double pan, double skillet, twin pans, connected pans, attached pans, split containers, extra bowl on side, side objects, corner objects, scattered objects, duplicate handles, multiple handles on skillet, extra skillet handle, background objects, objects in corners, extra objects, additional objects, unlisted items, objects not in prompt, items not mentioned, random objects, unrelated items, additional cookware, extra utensils, extra dishes, extra plates, extra tools, disconnected objects, floating objects, separate pieces, text, words, letters, numbers, labels, writing, font, typography, realistic, 3D, photo, photograph, side view, angled view, perspective, gradient, heavy texture, detailed shading, noisy background, watermark, blur, noise, unnecessary decorations, excessive patterns, complex details, harsh shadows, highlights, depth effect, multiple backgrounds, cluttered"
 
-        # Generate image with MAXIMUM constraint
-        output = replicate.run(
-            STABLE_DIFFUSION_MODEL,
-            input={
-                "prompt": prompt,
-                "width": width,
-                "height": height,
-                "seed": seed,  # Fixed seed for consistency
-                "num_inference_steps": 50,  # Maximum steps for accuracy
-                "guidance_scale": 15.0,  # ULTRA high = maximum prompt adherence
-                "scheduler": "DPMSolverMultistep",
-                "negative_prompt": negative_prompt
-            }
-        )
+        # Build input parameters (use config defaults if not provided)
+        input_params = {
+            "prompt": prompt,
+            "width": width if width is not None else SD_WIDTH,
+            "height": height if height is not None else SD_HEIGHT,
+            "seed": seed if seed is not None else SD_SEED,
+            "num_inference_steps": 75,  # Increased from 50 for better denoising and prompt adherence
+            "guidance_scale": 27.5,  # Increased from 25.0 to further reduce hallucinations
+            "scheduler": "DPMSolverMultistep",
+            "negative_prompt": negative_prompt
+        }
+
+        # If reference image provided, use img2img mode to preserve equipment shape only
+        if reference_image_url:
+            logger.info(f"Using reference image for equipment consistency: {reference_image_url[:80]}...")
+            input_params["image"] = reference_image_url
+            # prompt_strength: 0.96 = preserve only 4% of reference (minimal shape hint), modify 96% (all colors, details, ingredients)
+            # Higher strength = more changes, lower strength = more preservation
+            # We use very high strength to barely preserve shape, giving prompt maximum control
+            input_params["prompt_strength"] = 0.96
+            logger.info("Using img2img mode with prompt_strength=0.96 to minimize composition influence")
+
+        # Generate image
+        output = replicate.run(STABLE_DIFFUSION_MODEL, input=input_params)
 
         # Output is a list of URLs
         if output and len(output) > 0:
@@ -178,7 +228,7 @@ def download_image(url: str) -> Optional[bytes]:
         Image bytes, or None if download failed
     """
     try:
-        response = requests.get(url, timeout=30)
+        response = requests.get(url, timeout=HTTP_REQUEST_TIMEOUT)
         response.raise_for_status()
         return response.content
     except Exception as e:
@@ -253,14 +303,74 @@ def generate_and_store_step_image(
 
         logger.info(f"Step {step_id} ingredients: {ingredients}, equipment: {equipment}")
 
-        # Fetch step output and dependencies for graph-based workflow
+        # Fetch step output early to check for equipment mentioned in output
         step_result = supabase_client.table("recipe_steps").select("output, dependencies, step_number").eq("id", step_id).execute()
         step_output = None
+        if step_result.data and len(step_result.data) > 0:
+            step_output = step_result.data[0].get('output')
+
+        # If equipment list has no containers but output mentions one, infer equipment from output
+        # This handles cases where LLM didn't add container equipment to step but mentions it in output
+        container_keywords = ['bowl', 'pot', 'skillet', 'pan', 'plate', 'dish', 'tray', 'baking sheet']
+        has_container = any(any(keyword in eq.lower() for keyword in container_keywords) for eq in equipment) if equipment else False
+
+        if not has_container and step_output:
+            output_lower = step_output.lower()
+            for keyword in container_keywords:
+                if keyword in output_lower:
+                    # Found a container mentioned in output - add it to equipment for composition image
+                    equipment.append(keyword.capitalize())
+                    logger.info(f"Inferred equipment from output: {equipment}")
+                    break
+
+        # Composition images disabled - rely purely on text prompts
+        # Using composition images was causing color influence issues
+        composition_image_url = None
+
+        # # Fetch composition image URL for primary container equipment
+        # composition_image_url = None
+        # if equipment:
+        #     # Define container types (primary equipment that should be used as reference)
+        #     container_keywords = ['bowl', 'pot', 'skillet', 'pan', 'plate', 'dish', 'tray', 'baking sheet']
+        #
+        #     # Find the first container in equipment list
+        #     primary_container = None
+        #     for eq_name in equipment:
+        #         eq_lower = eq_name.lower()
+        #         if any(keyword in eq_lower for keyword in container_keywords):
+        #             primary_container = eq_name
+        #             break
+        #
+        #     if primary_container:
+        #         logger.info(f"Primary container identified: {primary_container}")
+        #         # Fetch composition_url from equipment table
+        #         try:
+        #             # Normalize equipment name for matching (remove hyphens, extra spaces)
+        #             normalized_name = primary_container.lower().replace('-', '').replace('  ', ' ')
+        #
+        #             # Fetch all equipment with composition URLs and match manually
+        #             eq_result = supabase_client.table("equipment").select("id, name, composition_url").execute()
+        #
+        #             # Find best match
+        #             for eq in eq_result.data:
+        #                 if eq.get('composition_url'):
+        #                     eq_normalized = eq['name'].lower().replace('-', '').replace('  ', ' ')
+        #                     # Check if the normalized names match
+        #                     if normalized_name in eq_normalized or eq_normalized in normalized_name:
+        #                         composition_image_url = eq['composition_url']
+        #                         logger.info(f"Found composition image for {primary_container} (matched {eq['name']}): {composition_image_url[:80]}...")
+        #                         break
+        #
+        #             if not composition_image_url:
+        #                 logger.info(f"No composition image available for {primary_container}")
+        #         except Exception as e:
+        #             logger.warning(f"Could not fetch composition image: {str(e)}")
+
+        # Fetch dependencies for graph-based workflow (step_output already fetched above)
         dependency_outputs = []
 
         if step_result.data and len(step_result.data) > 0:
             step_data = step_result.data[0]
-            step_output = step_data.get('output')
             dependencies = step_data.get('dependencies', [])
             current_step_number = step_data.get('step_number')
 
@@ -282,13 +392,32 @@ def generate_and_store_step_image(
         prompt = generate_step_image_prompt(step_instruction, recipe_title, ingredients, equipment, step_output, dependency_outputs)
         logger.info(f"Generated prompt for step {step_id}: {prompt}")
 
-        # Generate image based on configured backend
+        # Generate image based on configured backend with retry logic for NSFW failures
+        max_retries = 2
+        image_url = None
+
         if IMAGE_GENERATION_BACKEND == 'stable_diffusion':
-            # Use unique seed per step for varied compositions while maintaining determinism
-            # This prevents artifact carryover between steps (e.g., hallucinated objects appearing in same position)
-            step_seed = 1000 + step_id  # Unique but deterministic seed for each step
-            logger.info(f"Using seed {step_seed} for step {step_id}")
-            image_url = generate_image_with_stable_diffusion(prompt, seed=step_seed)
+            # Use configured seed for all image generation for maximum consistency
+            # This ensures visual consistency across all recipes and steps
+            logger.info(f"Using seed {SD_SEED} for step {step_id}")
+
+            # Retry up to max_retries times if NSFW failure occurs
+            for attempt in range(max_retries + 1):
+                if attempt > 0:
+                    logger.info(f"Retry attempt {attempt} for step {step_id} due to NSFW failure")
+
+                image_url = generate_image_with_stable_diffusion(
+                    prompt,
+                    seed=SD_SEED,
+                    reference_image_url=composition_image_url  # Pass container reference for consistency
+                )
+
+                if image_url:
+                    break  # Success, exit retry loop
+
+                # If last attempt failed, log and return None
+                if attempt == max_retries:
+                    logger.error(f"Failed to generate image for step {step_id} after {max_retries + 1} attempts")
         else:
             # Fall back to DALL-E
             image_url = generate_image_with_dalle(prompt)

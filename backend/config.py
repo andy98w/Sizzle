@@ -41,6 +41,31 @@ OCI_PAR_URL = os.environ.get('OCI_PAR_URL', '')
 STATIC_DIR = os.environ.get('STATIC_DIR', os.path.join(os.path.dirname(__file__), 'static'))
 TEMP_DIR = os.environ.get('TEMP_DIR', os.path.join(os.path.dirname(__file__), 'temp'))
 
+# Image Generation Configuration
+IMAGE_GENERATION_BACKEND = os.environ.get('IMAGE_GENERATION_BACKEND', 'stable_diffusion')
+DALLE_MODEL = os.environ.get('DALLE_MODEL', 'dall-e-3')
+DALLE_SIZE = os.environ.get('DALLE_SIZE', '1792x1024')
+DALLE_QUALITY = os.environ.get('DALLE_QUALITY', 'standard')
+
+# Stable Diffusion Configuration
+SD_WIDTH = int(os.environ.get('SD_WIDTH', '1792'))
+SD_HEIGHT = int(os.environ.get('SD_HEIGHT', '1024'))
+SD_SEED = int(os.environ.get('SD_SEED', '42'))
+
+# Image Size Configuration
+STANDARD_IMAGE_SIZE = tuple(map(int, os.environ.get('STANDARD_IMAGE_SIZE', '512,512').split(',')))
+STEP_IMAGE_SIZE = tuple(map(int, os.environ.get('STEP_IMAGE_SIZE', '716,512').split(',')))
+
+# Timeout Configuration
+HTTP_REQUEST_TIMEOUT = int(os.environ.get('HTTP_REQUEST_TIMEOUT', '30'))
+IMAGE_GENERATION_TIMEOUT = int(os.environ.get('IMAGE_GENERATION_TIMEOUT', '300'))
+
+# API Query Configuration
+DEFAULT_SEARCH_LIMIT = int(os.environ.get('DEFAULT_SEARCH_LIMIT', '5'))
+
+# Recipe Validation Configuration
+VALIDATE_FOOD_REQUESTS = os.environ.get('VALIDATE_FOOD_REQUESTS', 'true').lower() in ('true', 't', '1', 'yes', 'y')
+
 # Other Constants
-MAX_RETRIES = 3
-DEFAULT_QUERY_TIMEOUT = 30
+MAX_RETRIES = int(os.environ.get('MAX_RETRIES', '3'))
+DEFAULT_QUERY_TIMEOUT = int(os.environ.get('DEFAULT_QUERY_TIMEOUT', '30'))

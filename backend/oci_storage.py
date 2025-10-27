@@ -9,11 +9,6 @@ from PIL import Image
 
 mimetypes.init()
 
-# Standard image size for all uploads
-STANDARD_IMAGE_SIZE = (512, 512)
-# Recipe step images use landscape format to match DALL-E output
-STEP_IMAGE_SIZE = (716, 512)  # Maintains ~1.4:1 aspect ratio (close to 1792:1024)
-
 OCI_AVAILABLE = False
 
 try:
@@ -23,7 +18,10 @@ try:
 except ImportError:
     OCI_AVAILABLE = False
 
-from config import OCI_BUCKET_NAME, OCI_NAMESPACE, STATIC_DIR, OCI_PAR_URL
+from config import (
+    OCI_BUCKET_NAME, OCI_NAMESPACE, STATIC_DIR, OCI_PAR_URL,
+    STANDARD_IMAGE_SIZE, STEP_IMAGE_SIZE
+)
 from utils import logger, log_exception, format_oci_url
 
 class OCIObjectStorage:

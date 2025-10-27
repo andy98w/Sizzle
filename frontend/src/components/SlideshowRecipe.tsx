@@ -100,6 +100,13 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
           for (let stepIdx = 0; stepIdx < recipeClone.steps.length; stepIdx++) {
             const step = recipeClone.steps[stepIdx];
             console.log(`📝 Step ${stepIdx + 1} has ${step.ingredients?.length || 0} ingredients and ${step.equipment?.length || 0} equipment`);
+
+            // Add the step's generated image to preload list
+            if (step.image_url) {
+              imagesToPreload.push(step.image_url);
+              console.log(`✅ Added step image: Step ${stepIdx + 1}`);
+            }
+
             if (step.ingredients) {
               for (let i = 0; i < step.ingredients.length; i++) {
                 const ingredient = step.ingredients[i];
