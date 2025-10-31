@@ -11,8 +11,20 @@ import Link from 'next/link';
 const SAMPLE_RECIPE_ID = 19;
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
+interface Recipe {
+  id: number;
+  title: string;
+  description: string;
+  prepTime?: string;
+  cookTime?: string;
+  servings: number;
+  ingredients: Array<{ name: string; quantity?: string }>;
+  equipment: Array<{ name: string }>;
+  steps: Array<any>;
+}
+
 export default function RecipePage() {
-  const [recipe, setRecipe] = useState(null);
+  const [recipe, setRecipe] = useState<Recipe | null>(null);
   const [loading, setLoading] = useState(true);
   const [showSlideshow, setShowSlideshow] = useState(false); // Start with slideshow closed until recipe loads
 

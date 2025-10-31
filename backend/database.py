@@ -328,6 +328,90 @@ def execute_query_dict_single_row(query: str, params: Optional[Tuple] = None) ->
     results = execute_query_dict(query, params)
     return results[0] if results else None
 
+def execute_raw_sql(query: str, params: Optional[Tuple] = None) -> List[Dict]:
+    """
+    Execute raw SQL queries directly using psycopg2 for better performance.
+    This bypasses the Supabase REST API and allows complex SQL features like CASE statements.
+    """
+    if not SUPABASE_URL:
+        logger.warning("No database connection available for raw SQL")
+        return []
+
+    try:
+        import psycopg2
+        import psycopg2.extras
+        import os
+        import re
+        from urllib.parse import urlparse
+
+        # Try to get DATABASE_URL from environment first
+        # This is the actual PostgreSQL connection string
+        database_url = os.environ.get('DATABASE_URL')
+
+        if not database_url:
+            # If no DATABASE_URL, construct from Supabase URL
+            # Supabase HTTP API URL format: https://PROJECT_ID.supabase.co
+            # PostgreSQL URL format: postgresql://postgres:PASSWORD@db.PROJECT_ID.supabase.co:5432/postgres
+
+            # Extract project ID from Supabase URL
+            if SUPABASE_URL.startswith('https://'):
+                parsed = urlparse(SUPABASE_URL)
+                project_id = parsed.hostname.split('.')[0]
+
+                # Get password from SUPABASE_KEY or env
+                password = os.environ.get('SUPABASE_DB_PASSWORD') or os.environ.get('POSTGRES_PASSWORD')
+
+                if not password:
+                    logger.error("No database password available. Set DATABASE_URL, SUPABASE_DB_PASSWORD, or POSTGRES_PASSWORD")
+                    return []
+
+                database_url = f"postgresql://postgres.{project_id}:{password}@aws-0-us-west-1.pooler.supabase.com:6543/postgres"
+
+        # Parse the database URL
+        url_pattern = r'postgresql://(.+?):(.+?)@(.+?):(\d+)/(.+)'
+        match = re.match(url_pattern, database_url)
+
+        if not match:
+            logger.error(f"Invalid PostgreSQL URL format: {database_url[:30]}...")
+            return []
+
+        user, password, host, port, dbname = match.groups()
+
+        # Create direct PostgreSQL connection
+        conn = psycopg2.connect(
+            host=host,
+            port=port,
+            dbname=dbname,
+            user=user,
+            password=password,
+            connect_timeout=10
+        )
+
+        # Use RealDictCursor to get results as dictionaries
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # Execute query
+        if params:
+            cursor.execute(query, params)
+        else:
+            cursor.execute(query)
+
+        # Fetch results
+        results = cursor.fetchall()
+
+        # Convert RealDictRow to regular dict
+        results = [dict(row) for row in results]
+
+        cursor.close()
+        conn.close()
+
+        return results
+
+    except Exception as e:
+        logger.error(f"Error executing raw SQL: {str(e)}")
+        log_exception(e, "Raw SQL execution error")
+        return []
+
 def get_database_status() -> Dict[str, Any]:
     """Checks the status of the database connection."""
     if supabase_available and supabase_client:

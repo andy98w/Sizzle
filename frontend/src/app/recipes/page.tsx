@@ -25,13 +25,14 @@ export default function RecipesPage() {
     const fetchRecipes = async () => {
       try {
         setIsLoading(true);
-        const response = await fetch(`${API_URL}/recipes`);
+        // Fetch with limit for faster loading
+        const response = await fetch(`${API_URL}/recipes?limit=50`);
         if (!response.ok) {
           throw new Error('Failed to fetch recipes');
         }
-        
+
         const data = await response.json();
-        setRecipes(data.recipes || []);
+        setRecipes(data.data?.recipes || []);
         setError(null);
       } catch (err) {
         console.error('Error fetching recipes:', err);

@@ -362,13 +362,15 @@ async def list_recipes(
 ):
     """List recipes with optional search and pagination."""
     try:
-        # Fetch recipes - we'll sort in Python since Supabase REST API doesn't support CASE statements
         if search:
-            # Fetch all matching recipes (we'll apply pagination after sorting)
-            query = "SELECT * FROM recipes WHERE title ILIKE %s OR description ILIKE %s"
+            # Optimized search: fetch limited results and sort in Python
+            # Limit to 100 recipes max for performance (can adjust if needed)
+            max_fetch = min(100, offset + limit * 3)  # Fetch a bit more than needed for pagination
+
+            query = "SELECT * FROM recipes WHERE title ILIKE %s OR description ILIKE %s LIMIT %s"
             search_term = f"%{search}%"
-            params = [search_term, search_term]
-            all_recipes = execute_query_dict(query, tuple(params))
+            params = (search_term, search_term, max_fetch)
+            all_recipes = execute_query_dict(query, params)
 
             # Sort by relevance in Python
             # 1. Exact title match (highest priority)
@@ -379,7 +381,6 @@ async def list_recipes(
             def relevance_score(recipe):
                 title_lower = recipe.get('title', '').lower()
                 search_lower = search.lower()
-                desc_lower = recipe.get('description', '').lower()
 
                 # Return tuple for sorting (lower is better)
                 exact_match = 0 if title_lower == search_lower else 1
@@ -393,17 +394,15 @@ async def list_recipes(
             # Sort and apply pagination
             all_recipes.sort(key=relevance_score)
             recipes = all_recipes[offset:offset + limit]
+
+            # Total count (limited to what we fetched)
+            total_count = len(all_recipes)
         else:
             # No search, just list by newest first
             query = "SELECT * FROM recipes ORDER BY id DESC LIMIT %s OFFSET %s"
-            params = [limit, offset]
-            recipes = execute_query_dict(query, tuple(params))
-        
-        # Get total count for pagination
-        if search:
-            # For search, total is the length of all matching recipes
-            total_count = len(all_recipes)
-        else:
+            params = (limit, offset)
+            recipes = execute_query_dict(query, params)
+
             # For no search, query the total count
             count_query = "SELECT COUNT(*) FROM recipes"
             count_result = execute_query_dict_single_row(count_query, ())
