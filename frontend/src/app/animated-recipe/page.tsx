@@ -1,12 +1,9 @@
 'use client';
 
 import React, { useState } from 'react';
-import { motion } from 'framer-motion';
 import axios from 'axios';
+import { FaArrowRight, FaClock, FaPlayCircle, FaSearch } from 'react-icons/fa';
 import SlideshowRecipe from '@/components/SlideshowRecipe';
-import { FaUtensils, FaSearch, FaArrowRight, FaClock, FaPlayCircle } from 'react-icons/fa';
-import RecipeTitle from '@/components/RecipeTitle';
-import Link from 'next/link';
 import { API_URL } from '@/config';
 
 interface Recipe {
@@ -23,6 +20,8 @@ interface Recipe {
   steps: any[];
 }
 
+const sampleSearches = ['chicken, rice, scallions', 'weeknight tomato pasta', 'mushroom fried rice'];
+
 export default function AnimatedRecipePage() {
   const [query, setQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -31,361 +30,195 @@ export default function AnimatedRecipePage() {
   const [error, setError] = useState<string | null>(null);
   const [showSlideshow, setShowSlideshow] = useState(false);
 
-  // Prevent body scrolling on this page
   React.useEffect(() => {
     const originalOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = originalOverflow;
-    };
+    return () => { document.body.style.overflow = originalOverflow; };
   }, []);
 
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
+  const formatRecipe = (recipe: any): Recipe => {
+    if (!recipe || typeof recipe !== 'object') {
+      throw new Error('Invalid recipe data received');
+    }
+
+    return {
+      id: recipe.id,
+      title: recipe.title || 'Untitled recipe',
+      description: recipe.description || 'No description was saved for this recipe.',
+      prepTime: recipe.prepTime || recipe.prep_time || '10 mins',
+      cookTime: recipe.cookTime || recipe.cook_time || '20 mins',
+      servings: recipe.servings && !isNaN(recipe.servings) ? recipe.servings : 2,
+      ingredients: Array.isArray(recipe.ingredients) ? recipe.ingredients : [],
+      equipment: Array.isArray(recipe.equipment) ? recipe.equipment : [],
+      steps: Array.isArray(recipe.steps) ? recipe.steps : [],
+    };
+  };
+
+  const selectRecipe = (recipe: Recipe) => {
+    setSelectedRecipe(formatRecipe(recipe));
+    setTimeout(() => setShowSlideshow(true), 50);
+  };
+
+  const handleSearch = async (event: React.FormEvent) => {
+    event.preventDefault();
     if (!query.trim()) return;
-    
+
     setIsLoading(true);
     setError(null);
     setSelectedRecipe(null);
     setMatchingRecipes([]);
-    
+
     try {
       const response = await axios.post(`${API_URL}/recipe/parse`, { query });
+      const responseData = response.data.data || response.data;
 
-      try {
-        const responseData = response.data.data || response.data;
-        if (responseData.matching_recipes && Array.isArray(responseData.matching_recipes)) {
-          const recipes = responseData.matching_recipes;
-
-          if (recipes.length === 0) {
-            setError('No recipes found for your search. Please try a different query.');
-            return;
-          }
-
-          setMatchingRecipes(recipes);
-
-          // Don't auto-open slideshow - let user choose from the list
-          // They can click on a recipe card to view it
-        } else if (response.data && (response.data.title || response.data.steps)) {
-          // Legacy format - single recipe
-          const formattedRecipe = formatRecipe(response.data);
-          setSelectedRecipe(formattedRecipe);
-          // Always show slideshow for single recipes
-          setTimeout(() => setShowSlideshow(true), 50);
-        } else {
-          try {
-            setIsLoading(true);
-            setError(null);
-
-            const loadingEl = document.getElementById('generation-loading-message');
-            if (loadingEl) {
-              loadingEl.textContent = 'Generating a new recipe for you...';
-            }
-
-            const generationResponse = await axios.post(`${API_URL}/recipe/parse`, { query });
-
-            if (generationResponse.data && generationResponse.data.matching_recipes && generationResponse.data.matching_recipes.length > 0) {
-              const recipes = generationResponse.data.matching_recipes;
-              const recipe = recipes[0];
-              const formattedRecipe = formatRecipe(recipe);
-
-              if (!formattedRecipe.id) {
-                try {
-                  const saveResponse = await axios.post(`${API_URL}/recipes`, formattedRecipe);
-                  formattedRecipe.id = saveResponse.data.id;
-                } catch (saveError) {
-                }
-              }
-
-              setSelectedRecipe(formattedRecipe);
-              setTimeout(() => setShowSlideshow(true), 50);
-            } else {
-              setError('Unable to generate a recipe. Please try with more specific ingredients or dish name.');
-            }
-          } catch (genError) {
-            let errorMessage = 'Failed to generate a recipe.';
-
-            if (genError && typeof genError === 'object') {
-              if ('response' in genError && genError.response &&
-                  typeof genError.response === 'object' && 'data' in genError.response &&
-                  genError.response.data && typeof genError.response.data === 'object' &&
-                  'message' in genError.response.data) {
-                errorMessage += ` API says: ${genError.response.data.message}`;
-              } else if ('message' in genError && typeof genError.message === 'string') {
-                errorMessage += ` Error: ${genError.message}`;
-              }
-            }
-
-            errorMessage += ' Please try using more specific ingredients or dish names.';
-
-            setError(errorMessage);
-          } finally {
-            setIsLoading(false);
-          }
+      if (Array.isArray(responseData.matching_recipes)) {
+        const recipes = responseData.matching_recipes.map(formatRecipe);
+        setMatchingRecipes(recipes);
+        if (recipes.length === 0) {
+          setError('No saved recipes match that search. Create one below or try different ingredients.');
         }
-      } catch (formatErr) {
-        setError('Error processing recipe data. Please try a different search.');
+      } else if (responseData.title || responseData.steps) {
+        selectRecipe(formatRecipe(responseData));
+      } else {
+        setError('The recipe data was incomplete. Try a different search.');
       }
-    } catch (error) {
-      setError('Failed to fetch the recipe. Please try again.');
+    } catch {
+      setError('The recipe service is not responding. Check that the API is running and search again.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const formatRecipe = (recipe: any): Recipe => {
-    if (!recipe || typeof recipe !== 'object') {
-      throw new Error("Invalid recipe data received");
-    }
+  const handleCreateRecipe = async () => {
+    if (!query.trim()) return;
+    setIsLoading(true);
+    setError(null);
 
-    if (!recipe.title) {
-      recipe.title = "Untitled Recipe";
-    }
+    try {
+      const response = await axios.post(`${API_URL}/recipe/generate`, { query });
+      const responseData = response.data.data || response.data;
 
-    if (!recipe.description) {
-      recipe.description = "A delicious recipe.";
-    }
+      if (!responseData || (!responseData.title && !responseData.steps)) {
+        setError('The recipe could not be created. Add a dish name or more specific ingredients.');
+        return;
+      }
 
-    if (!recipe.servings || isNaN(recipe.servings)) {
-      recipe.servings = 2;
+      const recipe = formatRecipe(responseData);
+      if (!recipe.id) {
+        try {
+          const saveResponse = await axios.post(`${API_URL}/recipes`, recipe);
+          recipe.id = saveResponse.data.id;
+        } catch {
+          // The walkthrough still works if saving fails.
+        }
+      }
+      setMatchingRecipes([recipe]);
+    } catch {
+      setError('The recipe could not be created. Check that the API is running and try again.');
+    } finally {
+      setIsLoading(false);
     }
-
-    if (!Array.isArray(recipe.steps)) {
-      recipe.steps = [];
-    }
-
-    if (!Array.isArray(recipe.ingredients)) {
-      recipe.ingredients = [];
-    }
-
-    if (!Array.isArray(recipe.equipment)) {
-      recipe.equipment = [];
-    }
-
-    return {
-      id: recipe.id,
-      title: recipe.title,
-      description: recipe.description,
-      prepTime: recipe.prepTime || recipe.prep_time || "10 mins",
-      cookTime: recipe.cookTime || recipe.cook_time || "20 mins",
-      servings: recipe.servings,
-      ingredients: recipe.ingredients || [],
-      equipment: recipe.equipment || [],
-      steps: recipe.steps || []
-    };
   };
-
-  const selectRecipe = (recipe: Recipe) => {
-    const formattedRecipe = formatRecipe(recipe);
-    setSelectedRecipe(formattedRecipe);
-
-    setTimeout(() => {
-      setShowSlideshow(true);
-    }, 50);
-  };
-
 
   return (
-    <div className="fixed inset-0 top-[73px] overflow-hidden flex flex-col">
-      {/* Slideshow Display */}
+    <div className="sizzle-search-page fixed inset-0 top-[68px] overflow-hidden flex flex-col">
       {selectedRecipe && !isLoading && showSlideshow && (
         <SlideshowRecipe
           recipe={selectedRecipe}
           onClose={() => {
             setShowSlideshow(false);
-
-            if (matchingRecipes.length <= 1) {
-              setSelectedRecipe(null);
-            }
+            if (matchingRecipes.length <= 1) setSelectedRecipe(null);
           }}
         />
       )}
 
-      <div className={`container mx-auto px-6 max-w-6xl flex-1 overflow-y-auto pt-6 ${showSlideshow ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
-        {/* Search Header */}
-        <motion.div
-          className="bg-white rounded-xl shadow-md overflow-hidden mb-6"
-          initial={{ opacity: 0, y: 30 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-        >
-          <div className="p-6">
-            <motion.div 
-              className="flex items-center mb-6"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.5, delay: 0.2 }}
-            >
-              <motion.div
-                className="bg-primary-500 text-white p-3 rounded-full mr-3"
-                whileHover={{ rotate: 180 }}
-                transition={{ duration: 0.5 }}
-              >
-                <FaUtensils size={24} />
-              </motion.div>
-              <h1 className="text-3xl font-bold text-gray-800">
-                Animated Recipe Finder
-              </h1>
-            </motion.div>
-            
-            <form onSubmit={handleSearch} className="flex flex-col md:flex-row gap-3">
-              <input
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search for any recipe (e.g., sushi rice, chocolate cake)"
-                className="flex-grow p-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                disabled={isLoading}
-              />
-              <motion.button
-                type="submit"
-                className="bg-primary-500 text-white py-3 px-6 rounded-md font-medium hover:bg-primary-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-                disabled={!query.trim() || isLoading}
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-              >
-                <FaSearch />
-                <span>{isLoading ? 'Searching...' : 'Find Recipe'}</span>
-              </motion.button>
-            </form>
-          </div>
-        </motion.div>
-        
-        {/* Loading state */}
-        {isLoading && (
-          <div className="flex justify-center py-12">
-            <div className="flex flex-col items-center">
-              <div className="w-16 h-16 border-4 border-primary-200 border-t-primary-500 rounded-full animate-spin mb-4"></div>
-              <p className="text-gray-600" id="generation-loading-message">Finding your recipe...</p>
+      <div className={`sizzle-scroll flex-1 overflow-y-auto ${showSlideshow ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+        <section className="recipe-search-hero">
+          <div className="sizzle-shell">
+            <div className="hero-copy-block">
+              <p className="kitchen-note">Recipe search + guided cooking</p>
+              <h1>Tell us what is<br />in the kitchen.</h1>
+              <p className="hero-deck">
+                Search the saved recipe box by dish or ingredient. Pick a result to open the step-by-step cooking view.
+              </p>
             </div>
-          </div>
-        )}
-        
-        {/* Error state */}
-        {error && (
-          <motion.div 
-            className="bg-red-50 border border-red-200 text-red-800 rounded-lg p-4 mb-8"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-          >
-            <p>{error}</p>
-          </motion.div>
-        )}
-        
-        {/* Recipe Search Results */}
-        {matchingRecipes.length > 0 && !showSlideshow && (
-          <motion.div
-            className="bg-white rounded-2xl shadow-md overflow-hidden mb-8"
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-          >
-            <div className="p-6">
-              <h2 className="text-2xl font-bold text-gray-800 mb-4">
-                {matchingRecipes.length} recipes found for "{query}"
-              </h2>
-              <div className="space-y-4">
-                {matchingRecipes.map((recipe, index) => (
-                  <motion.div
-                    key={recipe.id || index}
-                    className="border border-gray-200 rounded-lg p-4 hover:border-primary-300 hover:bg-primary-50 transition-colors cursor-pointer"
-                    whileHover={{ scale: 1.01 }}
-                    onClick={() => selectRecipe(recipe)}
-                  >
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h3 className="font-bold text-lg text-gray-800">{recipe.title}</h3>
-                        <p className="text-gray-600 text-sm line-clamp-2 mt-1">{recipe.description}</p>
-                        <div className="flex items-center gap-4 mt-2 text-sm text-gray-500">
-                          {(recipe.prepTime || recipe.prep_time) && (
-                            <div className="flex items-center gap-1">
-                              <FaClock className="text-primary-500" />
-                              <span>Prep: {recipe.prepTime || recipe.prep_time}</span>
-                            </div>
-                          )}
-                          {(recipe.cookTime || recipe.cook_time) && (
-                            <div className="flex items-center gap-1">
-                              <FaClock className="text-primary-500" />
-                              <span>Cook: {recipe.cookTime || recipe.cook_time}</span>
-                            </div>
-                          )}
-                          <div>
-                            <span>Servings: {recipe.servings}</span>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <motion.button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            // Use the selectRecipe function for consistency
-                            selectRecipe(recipe);
-                          }}
-                          className="bg-primary-500 rounded-full p-3 text-white"
-                          whileHover={{ scale: 1.1 }}
-                          title="Start slideshow"
-                        >
-                          <FaPlayCircle size={20} />
-                        </motion.button>
-                      </div>
-                    </div>
-                  </motion.div>
+
+            <form onSubmit={handleSearch} className="order-ticket" aria-label="Recipe search">
+              <div className="ticket-topline"><span>Kitchen ticket</span><span>{new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span></div>
+              <label htmlFor="recipe-query">Dish or ingredients</label>
+              <div className="ticket-input-row">
+                <input
+                  id="recipe-query"
+                  type="text"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="e.g. salmon, lemon, potatoes"
+                  disabled={isLoading}
+                />
+                <button type="submit" disabled={!query.trim() || isLoading} aria-label="Search saved recipes">
+                  <FaSearch aria-hidden="true" />
+                </button>
+              </div>
+              <div className="sample-searches" aria-label="Example searches">
+                {sampleSearches.map((sample) => (
+                  <button key={sample} type="button" onClick={() => setQuery(sample)}>{sample}</button>
                 ))}
               </div>
+              <div className="ticket-actions">
+                <button className="search-button" type="submit" disabled={!query.trim() || isLoading}>
+                  {isLoading ? 'Checking the recipe box…' : 'Search saved recipes'}
+                </button>
+                <button className="create-button" type="button" onClick={handleCreateRecipe} disabled={!query.trim() || isLoading}>
+                  Create a recipe
+                </button>
+              </div>
+            </form>
+          </div>
+        </section>
 
-              {/* Generate New Recipe Button */}
-              <motion.div
-                className="mt-6 p-6 border-2 border-dashed border-gray-300 rounded-lg bg-gray-50 text-center"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5, delay: 0.2 }}
-              >
-                <p className="text-gray-600 mb-4">Can't find what you're looking for?</p>
-                <motion.button
-                  onClick={async () => {
-                    setIsLoading(true);
-                    setError(null);
+        <section className="results-section" aria-live="polite">
+          <div className="sizzle-shell">
+            {isLoading && (
+              <div className="working-state" id="generation-loading-message">
+                <span className="working-dot" /> Checking recipes…
+              </div>
+            )}
 
-                    try {
-                      const response = await axios.post(`${API_URL}/recipe/generate`, { query });
+            {error && <div className="recipe-error"><strong>Nothing to show yet.</strong><span>{error}</span></div>}
 
-                      const responseData = response.data.data || response.data;
-                      if (responseData && (responseData.title || responseData.steps)) {
-                        const formattedRecipe = formatRecipe(responseData);
+            {!isLoading && matchingRecipes.length === 0 && !error && (
+              <div className="empty-prep-list">
+                <span>01</span><p>Enter a dish or a few ingredients.</p>
+                <span>02</span><p>Search the saved recipe box—or create a new recipe.</p>
+                <span>03</span><p>Open the cooking view and move through each step.</p>
+              </div>
+            )}
 
-                        if (!formattedRecipe.id) {
-                          try {
-                            const saveResponse = await axios.post(`${API_URL}/recipes`, formattedRecipe);
-                            formattedRecipe.id = saveResponse.data.id;
-                          } catch (saveError) {
-                          }
-                        }
-                        setMatchingRecipes([formattedRecipe]);
-                        setIsLoading(false);
-                      } else {
-                        setError('Unable to generate a recipe. Please try with more specific ingredients or dish name.');
-                        setIsLoading(false);
-                      }
-                    } catch (error) {
-                      setError('Failed to generate a recipe. Please try again.');
-                      setIsLoading(false);
-                    }
-                  }}
-                  className="bg-gradient-to-r from-primary-500 to-primary-600 text-white py-3 px-8 rounded-lg font-medium hover:from-primary-600 hover:to-primary-700 transition-all shadow-md"
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  disabled={isLoading}
-                >
-                  <span className="flex items-center justify-center gap-2">
-                    <FaUtensils />
-                    <span>Generate New Recipe</span>
-                  </span>
-                </motion.button>
-              </motion.div>
-            </div>
-          </motion.div>
-        )}
+            {matchingRecipes.length > 0 && !showSlideshow && (
+              <div className="recipe-results">
+                <div className="results-heading">
+                  <h2>{matchingRecipes.length === 1 ? '1 recipe' : `${matchingRecipes.length} recipes`}</h2>
+                  <p>Matches for “{query}”</p>
+                </div>
+                <div className="result-list">
+                  {matchingRecipes.map((recipe, index) => (
+                    <button key={recipe.id || index} className="recipe-result" type="button" onClick={() => selectRecipe(recipe)}>
+                      <span className="result-index">{String(index + 1).padStart(2, '0')}</span>
+                      <span className="result-main"><strong>{recipe.title}</strong><small>{recipe.description}</small></span>
+                      <span className="result-meta">
+                        <span><FaClock /> {recipe.prepTime || recipe.prep_time} prep</span>
+                        <span><FaClock /> {recipe.cookTime || recipe.cook_time} cook</span>
+                        <span>{recipe.servings} servings</span>
+                      </span>
+                      <span className="result-open"><FaPlayCircle /><span>Cook this</span><FaArrowRight /></span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
       </div>
     </div>
   );

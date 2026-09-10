@@ -6,11 +6,10 @@ import RootLayoutClient from '@/components/RootLayoutClient'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'Sizzle - Animated Recipe Assistant',
-  description: 'AI-powered recipe assistant with animated step-by-step cooking instructions',
+  title: 'Sizzle — Find it. Cook it.',
+  description: 'Search recipes by dish or ingredient, then cook them one step at a time.',
 }
 
-// Server component for layout
 export default function RootLayout({
   children,
 }: {
