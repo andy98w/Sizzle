@@ -20,7 +20,7 @@ export default function PhysicsLab() {
       const summary = `Five seconds: ${commits.current} React commits; ${writes.current} transform mutations.`;
       setResult(summary);
       if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-        setResult(summary + ` Reduced motion: ${writes.current === 0 ? 'pass' : 'FAIL'}.`);
+        setResult(summary + ` Reduced motion: ${writes.current === 0 && document.querySelectorAll('[data-physics-item]').length === 20 ? 'pass' : 'FAIL'}.`);
       } else {
         const pause = document.querySelector<HTMLButtonElement>('button[aria-pressed]');
         const item = document.querySelector<HTMLElement>('[data-physics-item]');
@@ -31,7 +31,7 @@ export default function PhysicsLab() {
         const stopped = before === item?.style.transform;
         item?.focus();
         item?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
-        setResult(summary + ` Pause: ${stopped ? 'pass' : 'FAIL'}. Keyboard move: ${before !== item?.style.transform ? 'pass' : 'FAIL'}.`);
+        setResult(summary + ` Active: ${writes.current > 0 ? 'pass' : 'FAIL'}. Pause: ${stopped ? 'pass' : 'FAIL'}. Keyboard move: ${before !== item?.style.transform ? 'pass' : 'FAIL'}.`);
       }
     }, 10000);
     return () => { clearTimeout(warmup); clearTimeout(finish); observer.disconnect(); };

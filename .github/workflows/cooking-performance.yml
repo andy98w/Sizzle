@@ -23,7 +23,7 @@ jobs:
       - run: npx @playwright/cli@0.1.19 snapshot
       - run: >-
           npx @playwright/cli@0.1.19 run-code
-          "await page.waitForFunction(() => document.querySelector('output')?.textContent?.includes('Pause: pass') && document.querySelector('output')?.textContent?.includes('Keyboard move: pass')); console.log(await page.locator('output').innerText());"
+          "await page.waitForFunction(() => document.querySelector('output')?.textContent?.includes('Active: pass') && document.querySelector('output')?.textContent?.includes('Pause: pass') && document.querySelector('output')?.textContent?.includes('Keyboard move: pass')); console.log(await page.locator('output').innerText());"
       - run: >-
           npx @playwright/cli@0.1.19 run-code
           "await page.emulateMedia({reducedMotion:'reduce'}); await page.reload(); await page.waitForFunction(() => document.querySelector('output')?.textContent?.includes('Reduced motion: pass')); console.log(await page.locator('output').innerText());"
