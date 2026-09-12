@@ -4,6 +4,11 @@ Sizzle turns a dish name or a list of ingredients into a recipe you can cook one
 
 The cooking view uses Matter.js to place ingredients and equipment on a virtual counter as the user moves through the instructions.
 
+The counter has pause and keyboard controls, with a static layout for reduced
+motion. Physics updates use element transforms rather than per-frame React
+state. [Rendering notes and checks](docs/cooking-performance.md) describe the
+fixed-scene measurement and the development-only test page.
+
 ## Repository layout
 
 - `frontend/` — Next.js, TypeScript, Tailwind CSS, Framer Motion, and Matter.js
