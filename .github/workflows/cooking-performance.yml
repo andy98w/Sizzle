@@ -1,0 +1,31 @@
+name: Cooking interface checks
+on:
+  push:
+    branches: [main, codex/cooking-performance]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  types:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci --legacy-peer-deps
+      - run: npx tsc --noEmit
+      - run: WATCHPACK_POLLING=true npm run dev -- --port 3016 > /tmp/sizzle-next.log 2>&1 &
+      - run: npx @playwright/cli@0.1.19 open http://127.0.0.1:3016/physics-lab
+      - run: npx @playwright/cli@0.1.19 snapshot
+      - run: >-
+          npx @playwright/cli@0.1.19 run-code
+          "await page.waitForFunction(() => document.querySelector('output')?.textContent?.includes('Pause: pass') && document.querySelector('output')?.textContent?.includes('Keyboard move: pass')); console.log(await page.locator('output').innerText());"
+      - run: >-
+          npx @playwright/cli@0.1.19 run-code
+          "await page.emulateMedia({reducedMotion:'reduce'}); await page.reload(); await page.waitForFunction(() => document.querySelector('output')?.textContent?.includes('Reduced motion: pass')); console.log(await page.locator('output').innerText());"
+      - run: npx @playwright/cli@0.1.19 close
+        if: always()

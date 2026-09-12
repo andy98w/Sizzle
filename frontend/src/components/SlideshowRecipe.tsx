@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, MotionConfig, useReducedMotion } from 'framer-motion';
 import { FaArrowLeft, FaArrowRight, FaClock, FaUser } from 'react-icons/fa';
 import { RecipeAnimation, IngredientVisual, EquipmentVisual, getIngredientImageUrl, getEquipmentImageUrl } from './AnimationLibrary';
 import { Recipe, RecipeStep, Ingredient, Equipment } from '@/types';
@@ -13,6 +13,7 @@ interface SlideshowRecipeProps {
 }
 
 const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) => {
+  const reducedMotion = useReducedMotion();
   const [currentSlide, setCurrentSlide] = useState(0);
   const [direction, setDirection] = useState(0);
   const [allImagesLoaded, setAllImagesLoaded] = useState(false);
@@ -230,6 +231,7 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
 
   // Navigation functions
   function goToNext() {
+    if (reducedMotion) { setCurrentSlide(value => Math.min(totalSlides - 1, value + 1)); return; }
     if (currentSlide < totalSlides - 1) {
       // If we're on the ingredients slide (slide 1), trigger the animation
       if (currentSlide === 1 && physicsCounterRef.current) {
@@ -260,6 +262,7 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
   }
 
   function goToPrevious() {
+    if (reducedMotion) { setCurrentSlide(value => Math.max(0, value - 1)); return; }
     if (currentSlide > 0) {
       // If we're on the ingredients slide (slide 1), trigger the animation in reverse
       if (currentSlide === 1 && physicsCounterRef.current) {
@@ -298,6 +301,8 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
   // Handle keyboard navigation
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
+      const target = e.target as HTMLElement;
+      if (e.defaultPrevented || target.closest('input, textarea, select, [contenteditable="true"], [data-physics-item]')) return;
       if (e.key === 'ArrowRight') {
         goToNext();
       } else if (e.key === 'ArrowLeft') {
@@ -312,7 +317,7 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [currentSlide]);
+  });
   
   // Animation variants
   const slideVariants = {
@@ -470,7 +475,7 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
 
   // Render the slideshow with a special class for detection
   return (
-    <>
+    <MotionConfig reducedMotion="user">
       {/* Standalone close button outside of any container */}
       <button
         onClick={(e) => {
@@ -905,7 +910,7 @@ const SlideshowRecipe: React.FC<SlideshowRecipeProps> = ({ recipe, onClose }) =>
         </div>
       </motion.div>
     </div>
-    </>
+    </MotionConfig>
   );
 };
 

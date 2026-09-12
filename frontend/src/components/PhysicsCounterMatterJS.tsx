@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Matter from 'matter-js';
+import { useReducedMotion } from 'framer-motion';
 import { PHYSICS_CONSTANTS, getCounterFloorPosition, PLACEHOLDER_INGREDIENT_URL, PLACEHOLDER_EQUIPMENT_URL } from '../utils/constants';
 import { getIngredientImageUrl, getEquipmentImageUrl } from './AnimationLibrary';
 import { API_URL } from '../config';
@@ -206,6 +207,17 @@ const PhysicsCounterMatterJS = React.forwardRef<{
   const runnerRef = useRef<Matter.Runner | null>(null);
   const mouseConstraintRef = useRef<Matter.MouseConstraint | null>(null);
   const groundBodyRef = useRef<Matter.Body | null>(null);
+  const reducedMotion = useReducedMotion();
+  const [paused, setPaused] = useState(false);
+  const [pageVisible, setPageVisible] = useState(true);
+  const itemElements = useRef(new Map<string, HTMLDivElement>());
+  const itemsRef = useRef<Item[]>([]);
+  useEffect(() => {
+    const update = () => setPageVisible(!document.hidden);
+    update();
+    document.addEventListener('visibilitychange', update);
+    return () => document.removeEventListener('visibilitychange', update);
+  }, []);
 
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   const [isLoading, setIsLoading] = useState(true);
@@ -218,6 +230,7 @@ const PhysicsCounterMatterJS = React.forwardRef<{
 
   // Items state - stores metadata alongside Matter.js bodies
   const [items, setItems] = useState<Item[]>([]);
+  itemsRef.current = items;
 
   // Track hover state for showing name
   const [hoveredItem, setHoveredItem] = useState<string | null>(null);
@@ -326,6 +339,7 @@ const PhysicsCounterMatterJS = React.forwardRef<{
       gravity: { x: 0, y: 1, scale: 0.004 } // Much faster gravity
     });
     engineRef.current = engine;
+    hasInitializedRef.current = false;
 
     // Create ground (floor) - much thicker and positioned to prevent items falling through
     const ground = Matter.Bodies.rectangle(
@@ -426,9 +440,6 @@ const PhysicsCounterMatterJS = React.forwardRef<{
 
     const runner = Matter.Runner.create();
     runnerRef.current = runner;
-    if (isVisible) {
-      Matter.Runner.run(runner, engine);
-    }
 
     // Force re-render on each engine update
     Matter.Events.on(engine, 'afterUpdate', () => {
@@ -450,12 +461,27 @@ const PhysicsCounterMatterJS = React.forwardRef<{
         }
       }
 
-      // Trigger React re-render by updating items
-      setItems(prevItems => [...prevItems]);
+      // Physics owns transforms; React only owns item metadata and controls.
+      for (const item of itemsRef.current) {
+        const element = itemElements.current.get(item.id);
+        if (element && item.body) {
+          const { x, y } = item.body.position;
+          element.style.transform = `translate3d(${x}px, ${y}px, 0) translate(-50%, -50%) rotate(${item.body.angle}rad)`;
+        }
+      }
     });
 
     return () => {
       Matter.Runner.stop(runner);
+      Matter.Events.off(engine, 'afterUpdate');
+      Matter.Events.off(mouseConstraint, 'mousemove enddrag');
+      mouse.element.removeEventListener('mousemove', mouseAny.mousemove);
+      mouse.element.removeEventListener('mousedown', mouseAny.mousedown);
+      mouse.element.removeEventListener('mouseup', mouseAny.mouseup);
+      mouse.element.removeEventListener('touchmove', mouseAny.mousemove);
+      mouse.element.removeEventListener('touchstart', mouseAny.mousedown);
+      mouse.element.removeEventListener('touchend', mouseAny.mouseup);
+      Matter.Mouse.clearSourceEvents(mouse);
       Matter.Engine.clear(engine);
       groundBodyRef.current = null;
     };
@@ -463,13 +489,13 @@ const PhysicsCounterMatterJS = React.forwardRef<{
 
   useEffect(() => {
     if (!runnerRef.current || !engineRef.current) return;
-
-    if (isVisible) {
-      Matter.Runner.run(runnerRef.current, engineRef.current);
-    } else {
-      Matter.Runner.stop(runnerRef.current);
+    const runner = runnerRef.current;
+    Matter.Runner.stop(runner);
+    if (isVisible && pageVisible && !paused && !reducedMotion) {
+      Matter.Runner.run(runner, engineRef.current);
     }
-  }, [isVisible]);
+    return () => { Matter.Runner.stop(runner); };
+  }, [isVisible, pageVisible, paused, reducedMotion, containerSize]);
 
   // Update ground position when floorY changes
   useEffect(() => {
@@ -484,7 +510,7 @@ const PhysicsCounterMatterJS = React.forwardRef<{
 
   // Initialize items
   useEffect(() => {
-    if (hasInitializedRef.current && resetTrigger === 0) return;
+    if (hasInitializedRef.current) return;
     if (!isVisible) return;
     if (!engineRef.current || containerSize.width === 0 || floorY <= 0) return;
 
@@ -658,6 +684,7 @@ const PhysicsCounterMatterJS = React.forwardRef<{
 
   // Function to start the exit animation
   const startExitAnimation = (direction: 1 | -1 = 1) => {
+    if (reducedMotion) { onSlideChange?.(direction); return; }
     lastExitDirectionRef.current = direction;
     console.log('Starting exit animation with direction:', direction);
     setAnimationState('none');
@@ -717,6 +744,7 @@ const PhysicsCounterMatterJS = React.forwardRef<{
 
   // Determine animation class based on state
   const getAnimationStyle = () => {
+    if (reducedMotion) return '';
     if (animationState === 'jiggle') {
       return animationDirection === 1 ? 'jiggleRightAnim' : 'jiggleLeftAnim';
     } else if (animationState === 'swipe') {
@@ -736,7 +764,7 @@ const PhysicsCounterMatterJS = React.forwardRef<{
         position: 'fixed',
         top: 0,
         left: 0,
-        overflow: 'visible',
+        overflow: reducedMotion ? 'auto' : 'visible',
         backgroundColor: 'transparent',
         zIndex: 9994,
         pointerEvents: 'auto', // Enable dragging - container is fixed position so it needs pointer events
@@ -750,6 +778,11 @@ const PhysicsCounterMatterJS = React.forwardRef<{
         animationFillMode: 'forwards'
       }}
     >
+      <button type="button" aria-pressed={paused || !!reducedMotion}
+        disabled={!!reducedMotion} onClick={() => setPaused(value => !value)}
+        style={{ position: 'fixed', top: 16, left: 68, zIndex: 50000, padding: '8px 12px', background: 'white', borderRadius: 8 }}>
+        {reducedMotion ? 'Motion reduced' : paused ? 'Resume motion' : 'Pause motion'}
+      </button>
       {/* Reset button - same style as close button */}
       <button
         onClick={() => {
@@ -826,10 +859,11 @@ const PhysicsCounterMatterJS = React.forwardRef<{
       )}
 
       {/* Items rendered as divs that sync with Matter.js bodies */}
-      {items.map(item => {
+      {items.map((item, index) => {
         if (!item.body) return null;
 
-        const { x, y } = item.body.position;
+        const columns = Math.max(1, Math.floor(containerSize.width / 120));
+        const { x, y } = reducedMotion ? { x: 65 + (index % columns) * 120, y: 130 + Math.floor(index / columns) * 120 } : item.body.position;
         const angle = item.body.angle;
 
         // Use consistent display size for all items regardless of physics shape
@@ -839,10 +873,25 @@ const PhysicsCounterMatterJS = React.forwardRef<{
         return (
           <div
             key={item.id}
+            ref={element => { if (element) itemElements.current.set(item.id, element); else itemElements.current.delete(item.id); }}
+            data-physics-item
+            tabIndex={isVisible ? 0 : -1}
+            role="group"
+            aria-label={`${item.name}. Use arrow keys to move when motion is enabled.`}
+            onKeyDown={event => {
+              const delta = { ArrowLeft: [-16, 0], ArrowRight: [16, 0], ArrowUp: [0, -16], ArrowDown: [0, 16] }[event.key];
+              if (!delta) return;
+              event.preventDefault(); event.stopPropagation();
+              if (!item.body || reducedMotion) return;
+              const position = { x: Math.max(30, Math.min(containerSize.width - 30, item.body.position.x + delta[0])), y: Math.max(50, Math.min(floorY - 40, item.body.position.y + delta[1])) };
+              Matter.Body.setPosition(item.body, position);
+              Matter.Body.setVelocity(item.body, { x: 0, y: 0 });
+              event.currentTarget.style.transform = `translate3d(${position.x}px, ${position.y}px, 0) translate(-50%, -50%) rotate(${item.body.angle}rad)`;
+            }}
             style={{
               position: 'absolute',
-              left: x,
-              top: y,
+              left: 0,
+              top: 0,
               width: displaySize,
               height: displaySize,
               backgroundColor: 'transparent',
@@ -850,7 +899,7 @@ const PhysicsCounterMatterJS = React.forwardRef<{
               alignItems: 'center',
               justifyContent: 'center',
               overflow: 'visible',
-              transform: `translate(-50%, -50%) rotate(${angle}rad)`,
+              transform: `translate3d(${x}px, ${y}px, 0) translate(-50%, -50%) rotate(${reducedMotion ? 0 : angle}rad)`,
               zIndex: 25000,
               userSelect: 'none',
               touchAction: 'none',
