@@ -30,7 +30,12 @@ export default function PhysicsLab() {
         await new Promise(resolve => setTimeout(resolve, 200));
         const stopped = before === item?.style.transform;
         item?.focus();
-        item?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+        // A random body may settle against a wall. Try all directions so a
+        // correctly clamped move is not mistaken for a broken keyboard handler.
+        for (const key of ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown']) {
+          item?.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+          if (before !== item?.style.transform) break;
+        }
         setResult(summary + ` Active: ${writes.current > 0 ? 'pass' : 'FAIL'}. Pause: ${stopped ? 'pass' : 'FAIL'}. Keyboard move: ${before !== item?.style.transform ? 'pass' : 'FAIL'}.`);
       }
     }, 10000);

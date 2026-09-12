@@ -23,7 +23,7 @@ jobs:
       - run: npx @playwright/cli@0.1.19 snapshot
       - run: >-
           npx @playwright/cli@0.1.19 run-code
-          "async (page) => { await page.waitForFunction(() => document.querySelector('output')?.textContent?.includes('Active: pass') && document.querySelector('output')?.textContent?.includes('Pause: pass') && document.querySelector('output')?.textContent?.includes('Keyboard move: pass')); console.log(await page.locator('output').innerText()); }"
+          "async (page) => { await page.emulateMedia({reducedMotion:'no-preference'}); await page.reload(); await page.waitForFunction(() => document.querySelector('output')?.textContent?.includes('Keyboard move:')); const report = await page.locator('output').innerText(); if (!report.includes('Active: pass') || !report.includes('Pause: pass') || !report.includes('Keyboard move: pass')) throw new Error(report); return report; }"
       - run: >-
           npx @playwright/cli@0.1.19 run-code
           "async (page) => { const errors = []; page.on('pageerror', error => errors.push(error.message)); await page.emulateMedia({reducedMotion:'reduce'}); await page.reload(); await page.waitForFunction(() => document.querySelector('output')?.textContent?.includes('Reduced motion: pass')); if (errors.length) throw new Error(errors.join('; ')); return await page.locator('output').innerText(); }"
