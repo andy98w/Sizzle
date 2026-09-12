@@ -207,7 +207,10 @@ const PhysicsCounterMatterJS = React.forwardRef<{
   const runnerRef = useRef<Matter.Runner | null>(null);
   const mouseConstraintRef = useRef<Matter.MouseConstraint | null>(null);
   const groundBodyRef = useRef<Matter.Body | null>(null);
-  const reducedMotion = useReducedMotion();
+  const preferredReducedMotion = useReducedMotion();
+  const [mounted, setMounted] = useState(false);
+  const reducedMotion = mounted && preferredReducedMotion;
+  useEffect(() => { setMounted(true); }, []);
   const [paused, setPaused] = useState(false);
   const [pageVisible, setPageVisible] = useState(true);
   const itemElements = useRef(new Map<string, HTMLDivElement>());
@@ -491,11 +494,11 @@ const PhysicsCounterMatterJS = React.forwardRef<{
     if (!runnerRef.current || !engineRef.current) return;
     const runner = runnerRef.current;
     Matter.Runner.stop(runner);
-    if (isVisible && pageVisible && !paused && !reducedMotion) {
+    if (mounted && isVisible && pageVisible && !paused && !reducedMotion) {
       Matter.Runner.run(runner, engineRef.current);
     }
     return () => { Matter.Runner.stop(runner); };
-  }, [isVisible, pageVisible, paused, reducedMotion, containerSize]);
+  }, [mounted, isVisible, pageVisible, paused, reducedMotion, containerSize]);
 
   // Update ground position when floorY changes
   useEffect(() => {
